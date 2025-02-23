@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "zakaya-leads"
+version = "0.1.0"
+description = "Lead generation and email automation tool for Zakaya"
+authors = ["Matt Toronto <matt@zakaya.io>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+streamlit = "^1.31.0"
+google-auth = "^2.27.0"
+google-api-python-client = "^2.118.0"
+playwright = "^1.41.0"
+langchain = "^0.1.9"
+pydantic = "^2.6.1"
+requests = "^2.31.0"
+asyncio = "^3.4.3"
+pandas = "^2.2.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api" 
