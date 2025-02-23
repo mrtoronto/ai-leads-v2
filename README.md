@@ -19,8 +19,9 @@ curl -sSL https://install.python-poetry.org | python3 -
 
 2. Clone the repository and install dependencies:
 ```bash
-cd zakaya-webapp/scripts/leads
-poetry install
+cd ai-leads-v2
+poetry lock
+poetry install --no-root
 ```
 
 3. Install Playwright browsers:
@@ -49,4 +50,6 @@ The tool requires the following configuration:
 - Zoho Mail API credentials
 - OpenAI API key
 
-Place these in a `local_settings.py` file (not included in repository). 
+Replace the placeholder values in `local_settings_sample.py` with your own credentials.
+
+Then, rename the file to `local_settings.py`. Zoho is optional but Google Sheets and OAI are required.
