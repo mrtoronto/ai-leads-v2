@@ -19,6 +19,7 @@ A streamlit-based tool for generating and managing leads for Zakaya, including a
     - No specific roles are required (i think) (but I used owner (i think))
 - Enable the following APIs:
   - Google Sheets API - [link](https://console.cloud.google.com/apis/library/sheets.googleapis.com)
+  - Google Drive API - [link](https://console.cloud.google.com/apis/library/drive.googleapis.com)
   
   
 1. Make sure you have Poetry installed:
