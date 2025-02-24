@@ -10,8 +10,17 @@ A streamlit-based tool for generating and managing leads for Zakaya, including a
 - Track lead status and email history
 - Interactive web interface
 
+
 ## Installation
 
+0. Setup GCP:
+- Create a new project in GCP
+- Create a service account and download the credentials as a JSON
+    - No specific roles are required (i think) (but I used owner (i think))
+- Enable the following APIs:
+  - Google Sheets API - [link](https://console.cloud.google.com/apis/library/sheets.googleapis.com)
+  
+  
 1. Make sure you have Poetry installed:
 ```bash
 curl -sSL https://install.python-poetry.org | python3 -
