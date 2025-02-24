@@ -33,7 +33,7 @@ poetry run playwright install
 
 Run the Streamlit app:
 ```bash
-poetry run streamlit run app.py
+poetry run streamlit run main.py
 ```
 
 The app will open in your default web browser with the following features:
