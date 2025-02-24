@@ -23,7 +23,7 @@ async def generate_search_queries(service, spreadsheet_id, additional_context=""
     
     # Prepare message for LLM
     messages = [
-        {"role": "system", "content": EXPAND_SEARCH_PROMPT.render()},
+        {"role": "system", "content": EXPAND_SEARCH_PROMPT.render(format_instruction=parser_search_query_list.get_format_instructions())},
         {"role": "user", "content": USER_BUSINESS_MESSAGE}
     ]
 

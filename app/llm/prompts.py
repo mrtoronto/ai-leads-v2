@@ -55,7 +55,7 @@ The search history provided contains only queries that have been run and produce
 so use these as good examples of effective queries to inspire new ones.
 
 Return a JSON object formatted as follows:
-{format_instruction}""".format(format_instruction=parser_search_query_list.get_format_instructions()))
+{format_instruction}""")
 
 
 WRITE_EMAIL_PROMPT = PromptTemplate("""You are an AI trained to write custom outreach emails to other businesses for a platform called Zakaya. You are provided with a template and a website analysis. Your job is to customize our template for outreach to this organization.
