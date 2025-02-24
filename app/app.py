@@ -17,6 +17,7 @@ from app.utils.gcs import (
     create_new_spreadsheet,
     get_spreadsheet_metadata
 )
+from app.utils.cache import get_spreadsheet_id_from_cache, save_spreadsheet_id_to_cache
 
 def get_searches_table(show_only_new=False):
     """Helper function to display searches table"""
@@ -94,7 +95,9 @@ def app():
 
     # Initialize session state for spreadsheet ID
     if 'spreadsheet_id' not in st.session_state:
-        st.session_state.spreadsheet_id = "1mfOB2fGdN97DeXzsOvsmOkKsL5lqapE9DS4s8-ZukCc"
+        # Try to get ID from cache first
+        cached_id = get_spreadsheet_id_from_cache()
+        st.session_state.spreadsheet_id = cached_id if cached_id else ""
 
     # Sidebar for navigation and configuration
     st.sidebar.title("Navigation")
@@ -109,10 +112,11 @@ def app():
 
     # Show current spreadsheet info
     try:
-        service = connect_to_sheets(st.session_state.spreadsheet_id)
-        sheet_info = get_spreadsheet_metadata(service, st.session_state.spreadsheet_id)
-        if sheet_info:
-            st.sidebar.markdown(f"**Current Sheet:** [{sheet_info['title']}]({sheet_info['url']})")
+        if st.session_state.spreadsheet_id:  # Only try to connect if we have an ID
+            service = connect_to_sheets(st.session_state.spreadsheet_id)
+            sheet_info = get_spreadsheet_metadata(service, st.session_state.spreadsheet_id)
+            if sheet_info:
+                st.sidebar.markdown(f"**Current Sheet:** [{sheet_info['title']}]({sheet_info['url']})")
     except Exception:
         st.sidebar.warning("Unable to fetch sheet information")
 
@@ -125,6 +129,7 @@ def app():
     # Update spreadsheet ID if changed
     if new_spreadsheet_id != st.session_state.spreadsheet_id:
         st.session_state.spreadsheet_id = new_spreadsheet_id
+        save_spreadsheet_id_to_cache(new_spreadsheet_id)  # Save to cache when updated
         st.rerun()
 
     # Initialize session state for async operations
