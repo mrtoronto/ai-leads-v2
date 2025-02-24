@@ -42,7 +42,7 @@ async def validate_search_results(results, existing_urls):
         ]
 
         messages = [
-            {"role": "system", "content": SEARCH_RESULTS_PROMPT.render()},
+            {"role": "system", "content": SEARCH_RESULTS_PROMPT.render(format_instruction=parser_lead_source_list.get_format_instructions())},
             {"role": "user", "content": USER_BUSINESS_MESSAGE},
             {"role": "user", "content": f"Please validate these sources and return only the relevant ones:\n{json.dumps(sources, indent=2)}"}
         ]

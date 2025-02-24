@@ -207,7 +207,7 @@ def customize_template(template_key: str, analysis: WebsiteAnalysis) -> Template
         TemplateCustomization object with customization details
     """
     messages = [
-        {"role": "system", "content": WRITE_EMAIL_PROMPT.render(template_key=template_key, template_extra_context=EMAIL_TEMPLATES[template_key]["extra_context"])},
+        {"role": "system", "content": WRITE_EMAIL_PROMPT.render(template_key=template_key, template_extra_context=EMAIL_TEMPLATES[template_key]["extra_context"], format_instruction=template_customization_adapter.get_format_instructions())},
         {"role": "user", "content": f"For context, here is some context about Zakaya:\n{ZAKAYA_CONTEXT}"},
         {"role": "user", "content": f"Please customize the template based on this analysis:\n{analysis.model_dump_json()}"}
     ]
@@ -256,7 +256,7 @@ def refine_template_customization(customization: TemplateCustomization, analysis
     messages = [
         {
             "role": "system",
-            "content": REFINE_EMAIL_PROMPT.render()
+            "content": REFINE_EMAIL_PROMPT.render(format_instruction=template_customization_adapter.get_format_instructions())
         },
         {
             "role": "user",

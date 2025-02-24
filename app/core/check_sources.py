@@ -85,7 +85,7 @@ async def process_source_with_llm(source_url, source_content):
     """Process a single source with LLM to validate and extract leads"""
     
     messages = [
-        {"role": "system", "content": LEAD_SOURCE_PROMPT.render()},
+        {"role": "system", "content": LEAD_SOURCE_PROMPT.render(format_instruction=parser_lead_source.get_format_instructions())},
         {"role": "user", "content": USER_BUSINESS_MESSAGE},
         {"role": "user", "content": f"Please analyze this webpage content and extract any relevant leads or sources:\n{source_content}"}
     ]

@@ -28,7 +28,7 @@ The user will describe their business and the type of businesses they are lookin
 Return only the most promising sources that match this criteria.
 
 Return a JSON object formatted as follows:
-{format_instruction}""".format(format_instruction=parser_lead_source_list.get_format_instructions()))
+{format_instruction}""")
 
 LEAD_SOURCE_PROMPT = PromptTemplate("""You are an AI trained to analyze business websites and identify potential leads and additional sources of leads.
 You will receive the content of a webpage, and your task is to:
@@ -39,7 +39,7 @@ You will receive the content of a webpage, and your task is to:
 Focus on finding businesses that might want to build a community around their services or have events and activities.
 
 Return a JSON object formatted as follows:
-{format_instruction}""".format(format_instruction=parser_lead_source.get_format_instructions()))
+{format_instruction}""")
 
 EXPAND_SEARCH_PROMPT = PromptTemplate("""You are an AI trained to analyze search history and generate new search queries.
 Based on the previous searches and their results, suggest new queries that:
@@ -82,7 +82,7 @@ Notes about specific aspects of the email:
 
 Return a JSON object formatted as follows:
 {format_instruction}
-""", format_instruction=template_customization_adapter.get_format_instructions())
+""")
 
 REFINE_EMAIL_PROMPT = PromptTemplate("""You are an AI trained to refine and improve email content for a platform called Zakaya. Your job is to take the draft email sections and make them flow better together while specifically avoiding repetition.
 
@@ -104,4 +104,4 @@ Key failure modes to watch out for and correct:
 
 Return a JSON object formatted as follows:
 {format_instruction}
-""", format_instruction=template_customization_adapter.get_format_instructions())
+""")
