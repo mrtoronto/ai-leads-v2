@@ -18,6 +18,9 @@ from app.utils.gcs import (
     get_spreadsheet_metadata
 )
 from app.utils.cache import get_spreadsheet_id_from_cache, save_spreadsheet_id_to_cache
+from app.utils.template_cache import save_templates_to_cache
+from app.llm.email_template import EMAIL_TEMPLATES, DEFAULT_EMAIL_TEMPLATES, ZAKAYA_CONTEXT, DEFAULT_ZAKAYA_CONTEXT
+from app.llm.llm import _llm
 
 def get_searches_table(show_only_new=False):
     """Helper function to display searches table"""
@@ -103,7 +106,7 @@ def app():
     st.sidebar.title("Navigation")
     page = st.sidebar.radio(
         "Select a Page",
-        ["Create New Sheet", "Generate Searches", "Run Search", "Check Sources", "Send Emails"]
+        ["Create New Sheet", "Generate Searches", "Run Search", "Check Sources", "Send Emails", "Configure Templates"]
     )
 
     # Spreadsheet ID configuration
@@ -435,6 +438,251 @@ def app():
         - Columns: Date, Query, Returns
         - Logs search queries and their results
         """)
+
+    # New page for configuring email templates
+    elif page == "Configure Templates":
+        st.title("⚙️ Configure Email Templates")
+        st.write("Customize email templates for different business types.")
+        
+        # Initialize state for template editing
+        if 'current_templates' not in st.session_state:
+            st.session_state.current_templates = EMAIL_TEMPLATES.copy()
+        
+        # Add tabs for different aspects of templates
+        tab1, tab2 = st.tabs(["Email Templates", "Business Context"])
+        
+        with tab1:
+            # Create a selector for which template to edit
+            template_type = st.selectbox(
+                "Select Template Type", 
+                options=list(st.session_state.current_templates.keys()),
+                format_func=lambda x: x.replace('_', ' ').title()
+            )
+            
+            st.subheader(f"Edit {template_type.replace('_', ' ').title()} Template")
+            
+            # Get the current template values
+            current_template = st.session_state.current_templates[template_type]
+            
+            # Create form fields
+            subject = st.text_input(
+                "Subject Line Template", 
+                value=current_template["subject"],
+                help="You can use {business_name} as a placeholder for the business name"
+            )
+            
+            main_pitch = st.text_area(
+                "Main Pitch", 
+                value=current_template["main_pitch"],
+                height=150,
+                help="This is the main value proposition. HTML formatting is supported."
+            )
+            
+            extra_context = st.text_area(
+                "Extra Context for LLM", 
+                value=current_template["extra_context"],
+                height=150,
+                help="This context helps the AI understand the purpose of this template."
+            )
+            
+            # Update button
+            if st.button("Update Template"):
+                # Update the template in session state
+                st.session_state.current_templates[template_type] = {
+                    "subject": subject,
+                    "main_pitch": main_pitch,
+                    "extra_context": extra_context
+                }
+                # Save to cache
+                cache_data = st.session_state.current_templates.copy()
+                if 'context' in st.session_state and st.session_state.context:
+                    cache_data['context'] = st.session_state.context
+                else:
+                    cache_data['context'] = ZAKAYA_CONTEXT
+                save_templates_to_cache(cache_data)
+                st.success(f"Updated {template_type} template!")
+            
+            st.markdown("---")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Add button to create a new template type
+                st.subheader("Add New Template")
+                new_template_name = st.text_input(
+                    "New Template Type",
+                    placeholder="e.g., yoga_studio",
+                    help="Enter a unique identifier for the new template (use lowercase with underscores)"
+                )
+                
+                if st.button("Add New Template") and new_template_name:
+                    # Validate name
+                    if new_template_name in st.session_state.current_templates:
+                        st.error(f"Template '{new_template_name}' already exists!")
+                    elif ' ' in new_template_name or not new_template_name.islower():
+                        st.warning("Template name should be lowercase with underscores instead of spaces")
+                    else:
+                        # Add new template with default values
+                        st.session_state.current_templates[new_template_name] = {
+                            "subject": "Community Platform for {business_name}",
+                            "main_pitch": """<p style="margin: 0 0 1em 0;">Our platform could help create a <span style="font-weight: bold;">vibrant online community</span> around your business!</p>""",
+                            "extra_context": "We are looking to sell these businesses on the idea of creating an online community around their activities."
+                        }
+                        # Save to cache
+                        cache_data = st.session_state.current_templates.copy()
+                        if 'context' in st.session_state and st.session_state.context:
+                            cache_data['context'] = st.session_state.context
+                        else:
+                            cache_data['context'] = ZAKAYA_CONTEXT
+                        save_templates_to_cache(cache_data)
+                        st.success(f"Added new template: {new_template_name}")
+                        # Force a rerun to update the selectbox
+                        st.rerun()
+            
+            with col2:
+                # Add option to delete a template
+                st.subheader("Remove Template")
+                template_to_delete = st.selectbox(
+                    "Select Template to Remove",
+                    options=list(st.session_state.current_templates.keys()),
+                    format_func=lambda x: x.replace('_', ' ').title()
+                )
+                
+                if st.button("Delete Template") and template_to_delete:
+                    # Remove the template
+                    if len(st.session_state.current_templates) <= 1:
+                        st.error("Cannot delete the only remaining template!")
+                    else:
+                        del st.session_state.current_templates[template_to_delete]
+                        # Save to cache
+                        cache_data = st.session_state.current_templates.copy()
+                        if 'context' in st.session_state and st.session_state.context:
+                            cache_data['context'] = st.session_state.context
+                        else:
+                            cache_data['context'] = ZAKAYA_CONTEXT
+                        save_templates_to_cache(cache_data)
+                        st.success(f"Deleted template: {template_to_delete}")
+                        # Force a rerun to update the selectbox
+                        st.rerun()
+        
+        with tab2:
+            st.subheader("Global Business Context")
+            st.write("This context is used by our AI to understand your business when generating email content.")
+            
+            # Store context in session state for persistence
+            if 'context' not in st.session_state:
+                st.session_state.context = ZAKAYA_CONTEXT
+            
+            # Main context editor
+            context_editor = st.text_area(
+                "Edit Business Context",
+                value=st.session_state.context,
+                height=300,
+                help="This context helps the AI understand your business and its value proposition."
+            )
+            
+            # Update context button
+            if st.button("Update Business Context"):
+                st.session_state.context = context_editor
+                # Save to cache with templates
+                cache_data = st.session_state.current_templates.copy()
+                cache_data['context'] = context_editor
+                save_templates_to_cache(cache_data)
+                st.success("Updated business context!")
+            
+            st.markdown("---")
+            
+            # AI-powered context improvement
+            st.subheader("Improve Context with AI")
+            st.write("Let our AI help you improve your business context.")
+            
+            improvement_input = st.text_area(
+                "What would you like to improve?",
+                placeholder="Describe what aspects of your context you'd like to improve and any additional information about your business that might help the AI...",
+                height=150,
+                help="You can mention specific focus areas (like clarity, persuasiveness) and include any additional business details not reflected in the current context."
+            )
+            
+            if st.button("Generate Improved Context", type="primary"):
+                if not improvement_input:
+                    st.error("Please describe what you'd like to improve.")
+                else:
+                    with st.spinner("Generating improved context..."):
+                        # Prepare the prompt for the LLM
+                        messages = [
+                            {
+                                "role": "system", 
+                                "content": """You are an expert in business communication and marketing. 
+                                Your task is to improve a business context that will be used as a reference by an AI that generates personalized email outreach.
+                                Create a well-structured, persuasive, and clear business context that highlights the key value propositions and benefits.
+                                Format the output as a numbered list of 5-10 points, each focused on a distinct benefit or feature.
+                                Keep each point under 3 sentences for clarity."""
+                            },
+                            {
+                                "role": "user",
+                                "content": f"""
+                                Here is the current business context:
+                                
+                                {st.session_state.context}
+                                
+                                The user would like to improve this context:
+                                
+                                {improvement_input}
+                                
+                                Please provide an improved context that maintains the same structure (numbered list) but incorporates the user's feedback.
+                                """
+                            }
+                        ]
+                        
+                        # Get response from LLM
+                        improved_context = _llm(messages)
+                        
+                        if improved_context:
+                            # Update the editor with the improved context
+                            st.session_state.context = improved_context
+                            # Save to cache
+                            cache_data = st.session_state.current_templates.copy()
+                            cache_data['context'] = improved_context
+                            save_templates_to_cache(cache_data)
+                            st.success("Generated improved context!")
+                            st.info("The context editor has been updated with the AI-generated content. You can make further edits as needed.")
+                            # Rerun to show the updated context in the editor
+                            st.rerun()
+                        else:
+                            st.error("Failed to generate improved context. Please try again.")
+            
+            st.markdown("---")
+            
+            # Reset option
+            st.subheader("Reset to Default")
+            if st.button("Reset Business Context to Default"):
+                # Reset context to default
+                st.session_state.context = DEFAULT_ZAKAYA_CONTEXT
+                
+                # Save to cache with templates
+                cache_data = st.session_state.current_templates.copy()
+                cache_data['context'] = DEFAULT_ZAKAYA_CONTEXT
+                save_templates_to_cache(cache_data)
+                
+                st.success("Reset business context to default values")
+                # Force a rerun to update the editor
+                st.rerun()
+
+    # Add option to reset all templates to default
+    if st.button("Reset All Templates and Context to Default"):
+        # Create a copy of the default templates
+        reset_data = DEFAULT_EMAIL_TEMPLATES.copy()
+        # Add default context
+        reset_data['context'] = DEFAULT_ZAKAYA_CONTEXT
+        
+        # Save to cache and update session state
+        save_templates_to_cache(reset_data)
+        st.session_state.current_templates = DEFAULT_EMAIL_TEMPLATES.copy()
+        if 'context' in st.session_state:
+            st.session_state.context = DEFAULT_ZAKAYA_CONTEXT
+        st.success("Reset all templates and business context to default values")
+        # Force a rerun
+        st.rerun()
 
     # Footer
     st.sidebar.markdown("---")

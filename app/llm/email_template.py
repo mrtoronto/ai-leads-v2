@@ -1,8 +1,12 @@
-ZAKAYA_CONTEXT = """
+import os
+from app.utils.template_cache import load_templates_from_cache
+
+# Default business context - will be replaced by cached version if available
+DEFAULT_ZAKAYA_CONTEXT = """
 1. Unique Community Dynamics: Emphasize Zakaya's ability to replicate real-life social dynamics online, creating a sense of belonging and community that is often missing in traditional online platforms. This can be particularly appealing to businesses that value strong customer relationships and community loyalty.
 2. Targeted Community Engagement: Highlight how Zakaya's dense micro-communities can lead to increased engagement and interaction among members. This is crucial for businesses that rely on active participation, such as educational institutions, hobby groups, or professional networks.
 Retention and Loyalty: Stress the potential for Zakaya to improve customer retention and loyalty by fostering a community where members feel connected and valued. This can be a key selling point for subscription-based services or membership organizations.
-4. Comprehensive Feature Set: Detail the app's features, such as chat rooms, content feeds, event calendars, and the buddy match program, which are designed to facilitate interaction and engagement. These features can be tailored to meet the specific needs of different types of communities, from social clubs to professional networks.
+4. Comprehensive Feature Set: Detail the app's features, such as text and voice chat rooms, content feeds, event calendars, and the buddy match program, which are designed to facilitate interaction and engagement. These features can be tailored to meet the specific needs of different types of communities, from social clubs to professional networks.
 5. Onboarding and Integration: The buddy match program not only helps new members integrate quickly but also encourages ongoing interaction, which can be a significant advantage for businesses looking to enhance their onboarding process and ensure new members feel welcomed and engaged.
 Feedback-Driven Development: Zakaya's commitment to incorporating user feedback into its development process can be a major draw for potential users who value a platform that listens and adapts to their needs. This can be particularly appealing to tech-savvy audiences or those who have been frustrated by unresponsive platforms in the past.
 7. Transparency and Trust: The visible progress of feedback and feature requests in the global chat room can build trust with users, showing that their input is valued and acted upon. This transparency can differentiate Zakaya from competitors and foster a more engaged and loyal user base.
@@ -11,7 +15,6 @@ Scalability and Customization: Highlight Zakaya's potential to scale and customi
 Potential for Cross-Promotion: Businesses can use Zakaya to cross-promote events, products, or services within the community, leveraging the dense network of connections to reach a wider audience.
 By incorporating these refined points into your outreach strategy, you can provide a comprehensive and compelling case for why potential users should consider adopting Zakaya for their community-building needs.
 """
-
 
 # Base HTML template with standard formatting
 BASE_EMAIL_TEMPLATE = """
@@ -37,8 +40,8 @@ BASE_EMAIL_TEMPLATE = """
 </div>
 """
 
-# Email templates dictionary with just the variable content
-EMAIL_TEMPLATES = {
+# Default email templates - define this BEFORE using it
+DEFAULT_EMAIL_TEMPLATES = {
     "coworking": {
         "extra_context": "We are looking to sell these businesses on the idea of creating an online community around their physical space. This should increase regular attendance, engagement with the space, retention and revenue.",
         "subject": "Digital Third Place for {business_name}",
@@ -95,6 +98,17 @@ EMAIL_TEMPLATES = {
         "main_pitch": """<p style="margin: 0 0 1em 0;">Zakaya could help grow a <span style="font-weight: bold;">flourishing garden community</span> that connects green thumbs year-round!</p>"""
     }
 }
+
+# Load cached data
+cached_data = load_templates_from_cache()
+
+# Set up email templates and context from cache or defaults
+if cached_data and 'context' in cached_data:
+    ZAKAYA_CONTEXT = cached_data['context']
+    EMAIL_TEMPLATES = {k: v for k, v in cached_data.items() if k != 'context'}
+else:
+    ZAKAYA_CONTEXT = DEFAULT_ZAKAYA_CONTEXT
+    EMAIL_TEMPLATES = DEFAULT_EMAIL_TEMPLATES
 
 def get_email_content(template_key: str, safe_name: str, custom_intro: str, key_points: str, custom_closing: str, lead_url: str) -> str:
     """
