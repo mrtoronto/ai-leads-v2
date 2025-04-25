@@ -207,7 +207,7 @@ def customize_template(template_key: str, analysis: WebsiteAnalysis) -> Template
         TemplateCustomization object with customization details
     """
     messages = [
-        {"role": "system", "content": WRITE_EMAIL_PROMPT.render(template_key=template_key, template_extra_context=EMAIL_TEMPLATES[template_key]["extra_context"], format_instruction=template_customization_adapter.get_format_instructions())},
+        {"role": "system", "content": WRITE_EMAIL_PROMPT.render(template_key=template_key, template_extra_context=EMAIL_TEMPLATES[template_key], format_instruction=template_customization_adapter.get_format_instructions())},
         {"role": "user", "content": f"For context, here is some context about Zakaya:\n{ZAKAYA_CONTEXT}"},
         {"role": "user", "content": f"Please customize the template based on this analysis:\n{analysis.model_dump_json()}"}
     ]
@@ -325,6 +325,7 @@ def create_customized_email(website: str, email: str, page_content: str) -> Tupl
         safe_name=refined_customization.safe_name,
         template_key=template_selection.template_key,
         custom_intro=refined_customization.custom_intro,
+        custom_main_pitch=refined_customization.custom_main_pitch,
         key_points=key_points_html,
         custom_closing=refined_customization.custom_closing,
         lead_url=website
@@ -557,13 +558,44 @@ def check_if_already_emailed(service, spreadsheet_id, email):
         print("Could not find Email or Emailed? columns in leads sheet")
         return False
     
-    # Check if email exists and has been emailed
+    already_emailed = False
+    needs_update = False
+    
+    # First check if any instance of the email has been marked as emailed
     for row in existing_data[1:]:  # Skip header row
         if len(row) > email_index and row[email_index] == email:
-            if len(row) > emailed_index and row[emailed_index].lower() == 'true':
-                return True
+            if len(row) > emailed_index and row[emailed_index].strip() != "":
+                already_emailed = True
+                break
     
-    return False
+    # If already emailed, make sure ALL instances of this email are marked as emailed
+    if already_emailed:
+        rows_updated = 0
+        for row in existing_data[1:]:  # Skip header row
+            if len(row) > email_index and row[email_index] == email:
+                # Ensure row has enough columns
+                while len(row) < len(headers):
+                    row.append('')
+                
+                if len(row) > emailed_index and row[emailed_index] != 'True':
+                    row[emailed_index] = 'True'
+                    rows_updated += 1
+                    needs_update = True
+        
+        # If we found rows that need updating, write back the data
+        if needs_update:
+            body = {
+                'values': existing_data
+            }
+            service.spreadsheets().values().update(
+                spreadsheetId=spreadsheet_id,
+                range='leads!A1',
+                valueInputOption='RAW',
+                body=body
+            ).execute()
+            print(f"Updated {rows_updated} additional rows for email {email} to maintain consistency")
+    
+    return already_emailed
 
 def create_multiple_drafts(
     client_id: str,

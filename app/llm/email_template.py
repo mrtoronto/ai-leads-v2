@@ -35,8 +35,6 @@ BASE_EMAIL_TEMPLATE = """
     —<br><br>
     Matt Toronto, Founder<br>
     <a href="https://zakaya.io?utm_channel=lead_email&utm_source={safe_name}" style="font-weight: bold; text-decoration: underline; color: #0066cc;">Zakaya</a> | <a href="https://twitter.com/matttoronto" style="font-weight: bold; text-decoration: underline; color: #0066cc;">Twitter</a></p>
-
-    <a href="{lead_url}" style="font-weight: bold; text-decoration: underline; color: #0066cc;">{lead_url}</a>
 </div>
 """
 
@@ -110,7 +108,7 @@ else:
     ZAKAYA_CONTEXT = DEFAULT_ZAKAYA_CONTEXT
     EMAIL_TEMPLATES = DEFAULT_EMAIL_TEMPLATES
 
-def get_email_content(template_key: str, safe_name: str, custom_intro: str, key_points: str, custom_closing: str, lead_url: str) -> str:
+def get_email_content(template_key: str, safe_name: str, custom_intro: str, custom_main_pitch: str, key_points: str, custom_closing: str, lead_url: str) -> str:
     """
     Generate email content using the base template and customizations
     
@@ -137,7 +135,7 @@ def get_email_content(template_key: str, safe_name: str, custom_intro: str, key_
     return BASE_EMAIL_TEMPLATE.format(
         safe_name=safe_name,
         custom_intro=custom_intro,
-        main_pitch=template["main_pitch"],
+        main_pitch=custom_main_pitch,
         key_points=key_points,
         custom_closing=custom_closing,
         lead_url=lead_url

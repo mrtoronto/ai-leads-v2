@@ -78,6 +78,7 @@ class TemplateCustomization(BaseModel):
     safe_name: str = Field("", description="Safe name of the business to use in the url parameter for source tracking. URL safe, no special characters, no spaces, no special characters. Describes the business in a way that is easy to use in a URL.")
     subject_line: str = Field("", description="Customized subject line")
     custom_intro: str = Field("", description="Customized introduction paragraph for the outreach email without a greeting. Casual, friendly, and personalized for the business we're reaching out to. Conversational. Refer to the business in the way its described in the analysis. Assume the greeting has already been handled and should not be included here.")
+    custom_main_pitch: str = Field("", description="Customized main pitch paragraph for the outreach email. Uses conversational language and base it off the example provided but customize it for the business we're reaching out to.")
     key_points: List[str] = Field([], description="Key points to emphasize based on the business. Uses conversational language. First point talks about types of rooms on Zakaya, second point about the event calendar, third point about buddy matching and fourth point about how the organizations staff can engage with the community.")
     custom_closing: str = Field("", description="Customized closing paragraph. Uses conversational language.")
     specific_references: List[str] = Field([], description="Specific business details to reference. Uses conversational language.")
@@ -93,3 +94,9 @@ parser_lead_source_list = PydanticOutputParser(pydantic_object=LeadSourceListVal
 parser_lead_source = PydanticOutputParser(pydantic_object=LeadSourceValidation)
 
 parser_search_query_list = PydanticOutputParser(pydantic_object=SearchQueryList)
+
+class LeadCheckResult(BaseModel):
+    """Used to parse lead checking results"""
+    phone: str = Field("", description="The best phone number found on the page, or empty string if none found")
+    email: str = Field("", description="The best email address found on the page, or empty string if none found")
+    notes: str = Field("", description="2-3 specific, actionable bullet points for selling a digital community platform to this business")

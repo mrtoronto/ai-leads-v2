@@ -11,6 +11,31 @@ from app.utils.gcs import connect_to_sheets, write_to_sources_sheet, write_to_le
 from app.llm.prompts import LEAD_SOURCE_PROMPT, USER_BUSINESS_MESSAGE
 
 
+def normalize_url_for_comparison(url):
+    """Normalize URL for comparison by removing protocol, www, and trailing slashes"""
+    if not url:
+        return ""
+    
+    # Convert to lowercase
+    url = url.lower()
+    
+    # Remove http:// or https://
+    if url.startswith("http://"):
+        url = url[7:]
+    elif url.startswith("https://"):
+        url = url[8:]
+    
+    # Remove www.
+    if url.startswith("www."):
+        url = url[4:]
+    
+    # Remove trailing slash
+    if url.endswith("/"):
+        url = url[:-1]
+    
+    return url
+
+
 async def get_link_text_for_url(page, url):
     """Get the text of the link element that matches the given URL exactly"""
     link_text = await page.evaluate("""(targetUrl) => {
@@ -101,36 +126,24 @@ async def process_source_with_llm(source_url, source_content):
     return None
 
 
-
-async def process_sources(context, service, spreadsheet_id):
-    """Process each source and extract contact information using LLM"""
-    # Get sources
-    sources = get_sheet_data(service, spreadsheet_id, 'sources!A:F')
-    if len(sources) <= 1:  # Only headers or empty
-        print("No sources to process")
-        return
-    
-    headers = sources[0]
+async def process_single_source(context, service, spreadsheet_id, source, i, total, semaphore):
+    """Process a single source and extract contact information"""
+    headers = ['Title', 'URL', 'Description', 'Date Found', 'Status', 'Leads Found']
     url_index = headers.index('URL')
     status_index = headers.index('Status')
     title_index = headers.index('Title')
     desc_index = headers.index('Description')
     date_index = headers.index('Date Found')
-    leads_found_index = len(headers) - 1
+    leads_found_index = headers.index('Leads Found')
     
-    # Process each source
-    for i, source in enumerate(sources[1:], 1):
-        # Ensure source has all required fields
-        while len(source) < len(headers):
-            source.append('')
-        
-        # Skip if already checked
-        if source[status_index] == 'checked':
-            continue
-            
-        url = source[url_index]
-        print(f"\nProcessing: {url} ({i}/{len(sources)-1})")
-        
+    # Ensure source has all required fields
+    while len(source) < len(headers):
+        source.append('')
+    
+    url = source[url_index]
+    print(f"\nProcessing: {url} ({i}/{total})")
+    
+    async with semaphore:  # Use semaphore to limit concurrent requests
         try:
             page = await context.new_page()
             response = await page.goto(url, wait_until='networkidle', timeout=30000)
@@ -153,8 +166,9 @@ async def process_sources(context, service, spreadsheet_id):
                     'leads_found': '0'
                 }]
                 write_to_sources_sheet(service, spreadsheet_id, error_update)
+                await update_all_matching_sources(service, spreadsheet_id, url)
                 await page.close()
-                continue
+                return
             
             if status >= 400:
                 print(f"Error loading page (HTTP {status}): {url}")
@@ -167,10 +181,11 @@ async def process_sources(context, service, spreadsheet_id):
                     'leads_found': '0'
                 }]
                 write_to_sources_sheet(service, spreadsheet_id, error_update)
+                await update_all_matching_sources(service, spreadsheet_id, url)
                 await page.close()
-                continue
+                return
             
-            await asyncio.sleep(random.uniform(2, 3))
+            await asyncio.sleep(random.uniform(1, 2))
             
             # Get page title from head section
             page_title = await page.evaluate("""() => {
@@ -205,7 +220,6 @@ async def process_sources(context, service, spreadsheet_id):
                 source[title_index] = page_title
             
             # Get page content
-            content = await page.content()
             visible_text = await page.evaluate('() => document.body.innerText')
             
             # Process with LLM
@@ -277,12 +291,10 @@ async def process_sources(context, service, spreadsheet_id):
             
             if sources_to_update:
                 write_to_sources_sheet(service, spreadsheet_id, sources_to_update)
+                await update_all_matching_sources(service, spreadsheet_id, url)
                 print(f"Updated source and added {len(sources_to_update)-1} new sources")
             
             print(f"Found {total_leads} leads and {len(validation_result.AdditionalLeadSourcesFound if validation_result else [])} additional sources")
-            
-            await page.close()
-            await asyncio.sleep(random.uniform(2, 3))
             
         except Exception as e:
             print(f"Error processing {url}: {str(e)}")
@@ -296,12 +308,112 @@ async def process_sources(context, service, spreadsheet_id):
                 'leads_found': '0'
             }]
             write_to_sources_sheet(service, spreadsheet_id, error_update)
+            await update_all_matching_sources(service, spreadsheet_id, url)
             print("Marked errored source as checked")
+        finally:
             if 'page' in locals():
                 await page.close()
-            continue
+            await asyncio.sleep(random.uniform(1, 2))  # Add a short delay between processing
+
+
+async def process_sources(context, service, spreadsheet_id):
+    """Process sources in parallel with a limit on concurrency"""
+    # Get sources
+    sources = get_sheet_data(service, spreadsheet_id, 'sources!A:F')
+    if len(sources) <= 1:  # Only headers or empty
+        print("No sources to process")
+        return
+    
+    headers = sources[0]
+    status_index = headers.index('Status')
+    
+    # Filter sources that need to be checked
+    sources_to_check = [source for source in sources[1:] if source[status_index] != 'checked']
+    
+    if not sources_to_check:
+        print("No new sources to process")
+        return
+    
+    # Create a semaphore to limit concurrency
+    # Adjust the number based on your system's capacity and API rate limits
+    max_concurrent = 5
+    semaphore = asyncio.Semaphore(max_concurrent)
+    
+    print(f"Processing {len(sources_to_check)} sources with max {max_concurrent} concurrent tasks")
+    
+    # Create tasks for each source
+    tasks = []
+    for i, source in enumerate(sources_to_check, 1):
+        task = process_single_source(
+            context, service, spreadsheet_id, 
+            source, i, len(sources_to_check), semaphore
+        )
+        tasks.append(task)
+    
+    # Run tasks concurrently
+    await asyncio.gather(*tasks)
     
     print("\nFinished processing all sources")
+
+
+async def update_all_matching_sources(service, spreadsheet_id, target_url):
+    """Update all sources with the same URL to be marked as checked
+    
+    Args:
+        service: Google Sheets service object
+        spreadsheet_id: ID of the spreadsheet
+        target_url: URL to find matching sources for
+    """
+    # Get all sources
+    sources = get_sheet_data(service, spreadsheet_id, 'sources!A:F')
+    if len(sources) <= 1:  # Only headers or empty
+        return
+    
+    headers = sources[0]
+    url_index = headers.index('URL')
+    status_index = headers.index('Status')
+    returns_index = headers.index('Returns') if 'Returns' in headers else -1
+    
+    # Normalize the target URL for comparison
+    normalized_target = normalize_url_for_comparison(target_url)
+    
+    # Look for any other sources with matching URLs that aren't checked
+    sources_to_update = []
+    
+    for i, source in enumerate(sources[1:], 1):
+        # Ensure source has all required fields
+        while len(source) < len(headers):
+            source.append('')
+        
+        current_url = source[url_index]
+        normalized_current = normalize_url_for_comparison(current_url)
+        
+        # If URLs match (after normalization) but not checked, add to update list
+        if (normalized_current == normalized_target and 
+            source[status_index].lower() != 'checked'):
+            
+            # Create copy of source with status set to checked
+            updated_source = source.copy()
+            updated_source[status_index] = 'checked'
+            
+            update_dict = {
+                'title': updated_source[headers.index('Title')],
+                'url': updated_source[url_index],  # Keep original URL format
+                'description': updated_source[headers.index('Description')],
+                'date_found': updated_source[headers.index('Date Found')],
+                'status': 'checked'
+            }
+            
+            # Handle 'Returns' column if it exists
+            if returns_index >= 0 and len(updated_source) > returns_index:
+                update_dict['returns'] = updated_source[returns_index]
+                
+            sources_to_update.append(update_dict)
+    
+    # Write updates if any matching sources were found
+    if sources_to_update:
+        write_to_sources_sheet(service, spreadsheet_id, sources_to_update)
+        print(f"Updated {len(sources_to_update)} additional sources with normalized URL: {normalized_target}")
 
 
 async def check_sources():

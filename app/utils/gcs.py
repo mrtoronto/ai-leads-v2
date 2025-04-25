@@ -3,6 +3,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from app.local_settings import firestore_creds
 from datetime import datetime
+import time
 
 def get_base_domain(url):
     """Extract base domain from URL"""
@@ -200,98 +201,129 @@ def write_to_searches_sheet(service, spreadsheet_id, query, num_results):
     # Get current date
     current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
-    try:
-        # Get existing data
-        result = service.spreadsheets().values().get(
-            spreadsheetId=spreadsheet_id,
-            range='searches!A:C'
-        ).execute()
-        existing_rows = result.get('values', [])
-        
-        if not existing_rows:
-            # If sheet is empty, add headers first
-            headers = [['Date', 'Query', 'Returns']]
-            service.spreadsheets().values().update(
-                spreadsheetId=spreadsheet_id,
-                range='searches!A1',
-                valueInputOption='RAW',
-                body={'values': headers}
-            ).execute()
-            # Add new row after headers
-            new_row = [[current_date, query, num_results]]
-            service.spreadsheets().values().update(
-                spreadsheetId=spreadsheet_id,
-                range='searches!A2',
-                valueInputOption='RAW',
-                body={'values': new_row}
-            ).execute()
-            print(f"Created new sheet and logged search query with {num_results} results")
-            return
-        
-        # Find if query exists (case-insensitive comparison)
-        query_lower = query.lower()
-        query_row_index = None
-        for i, row in enumerate(existing_rows[1:], 1):  # Skip header row
-            if len(row) >= 2 and row[1].lower() == query_lower:
-                query_row_index = i
-                break
-        
-        if query_row_index is not None:
-            # Update existing row
-            update_row = [[current_date, query, num_results]]
-            service.spreadsheets().values().update(
-                spreadsheetId=spreadsheet_id,
-                range=f'searches!A{query_row_index + 1}',  # +1 for 1-based index
-                valueInputOption='RAW',
-                body={'values': update_row}
-            ).execute()
-            print(f"Updated existing search query with {num_results} results")
-        else:
-            # Append new row
-            new_row = [[current_date, query, num_results]]
-            service.spreadsheets().values().update(
-                spreadsheetId=spreadsheet_id,
-                range=f'searches!A{len(existing_rows) + 1}',
-                valueInputOption='RAW',
-                body={'values': new_row}
-            ).execute()
-            print(f"Added new search query with {num_results} results")
-        
-    except Exception as e:
-        print(f"Error writing to searches sheet: {str(e)}")
-        # If sheet doesn't exist, create it and try again
+    # Maximum number of retries for network errors
+    max_retries = 3
+    retry_count = 0
+    
+    while retry_count < max_retries:
         try:
-            # Create the sheet
-            body = {
-                'requests': [{
-                    'addSheet': {
-                        'properties': {
-                            'title': 'searches'
-                        }
+            # Get existing data
+            result = service.spreadsheets().values().get(
+                spreadsheetId=spreadsheet_id,
+                range='searches!A:C'
+            ).execute()
+            existing_rows = result.get('values', [])
+            
+            if not existing_rows:
+                # If sheet is empty, add headers first
+                headers = [['Date', 'Query', 'Returns']]
+                service.spreadsheets().values().update(
+                    spreadsheetId=spreadsheet_id,
+                    range='searches!A1',
+                    valueInputOption='RAW',
+                    body={'values': headers}
+                ).execute()
+                # Add new row after headers
+                new_row = [[current_date, query, num_results]]
+                service.spreadsheets().values().update(
+                    spreadsheetId=spreadsheet_id,
+                    range='searches!A2',
+                    valueInputOption='RAW',
+                    body={'values': new_row}
+                ).execute()
+                print(f"Created new sheet and logged search query with {num_results} results")
+                return
+            
+            # Find if query exists (case-insensitive comparison)
+            query_lower = query.lower()
+            query_row_index = None
+            for i, row in enumerate(existing_rows[1:], 1):  # Skip header row
+                if len(row) >= 2 and row[1].lower() == query_lower:
+                    query_row_index = i
+                    break
+            
+            if query_row_index is not None:
+                # Update existing row
+                update_row = [[current_date, query, num_results]]
+                service.spreadsheets().values().update(
+                    spreadsheetId=spreadsheet_id,
+                    range=f'searches!A{query_row_index + 1}',  # +1 for 1-based index
+                    valueInputOption='RAW',
+                    body={'values': update_row}
+                ).execute()
+                print(f"Updated existing search query with {num_results} results")
+            else:
+                # Append new row
+                new_row = [[current_date, query, num_results]]
+                service.spreadsheets().values().update(
+                    spreadsheetId=spreadsheet_id,
+                    range=f'searches!A{len(existing_rows) + 1}',
+                    valueInputOption='RAW',
+                    body={'values': new_row}
+                ).execute()
+                print(f"Added new search query with {num_results} results")
+            
+            # If we get here, we succeeded
+            return
+            
+        except Exception as e:
+            # Check if this is a network error that we should retry
+            if "Connection reset by peer" in str(e) or "timeout" in str(e).lower():
+                retry_count += 1
+                if retry_count < max_retries:
+                    print(f"Network error: {str(e)}. Retrying ({retry_count}/{max_retries})...")
+                    time.sleep(2)  # Wait before retrying
+                    continue
+                else:
+                    print(f"Failed after {max_retries} retries: {str(e)}")
+                    return
+            
+            print(f"Error writing to searches sheet: {str(e)}")
+            
+            # Only try to create the sheet if the error suggests it doesn't exist
+            sheet_not_found = any(x in str(e).lower() for x in ["not found", "does not exist", "invalid range"])
+            
+            if sheet_not_found:
+                try:
+                    # Create the sheet
+                    body = {
+                        'requests': [{
+                            'addSheet': {
+                                'properties': {
+                                    'title': 'searches'
+                                }
+                            }
+                        }]
                     }
-                }]
-            }
-            service.spreadsheets().batchUpdate(
-                spreadsheetId=spreadsheet_id,
-                body=body
-            ).execute()
-            
-            # Write headers and new row
-            rows = [
-                ['Date', 'Query', 'Returns'],
-                [current_date, query, num_results]
-            ]
-            
-            service.spreadsheets().values().update(
-                spreadsheetId=spreadsheet_id,
-                range='searches!A1',
-                valueInputOption='RAW',
-                body={'values': rows}
-            ).execute()
-            
-            print(f"Created new sheet and logged search query with {num_results} results")
-        except Exception as create_error:
-            print(f"Error creating searches sheet: {str(create_error)}")
+                    service.spreadsheets().batchUpdate(
+                        spreadsheetId=spreadsheet_id,
+                        body=body
+                    ).execute()
+                    
+                    # Write headers and new row
+                    rows = [
+                        ['Date', 'Query', 'Returns'],
+                        [current_date, query, num_results]
+                    ]
+                    
+                    service.spreadsheets().values().update(
+                        spreadsheetId=spreadsheet_id,
+                        range='searches!A1',
+                        valueInputOption='RAW',
+                        body={'values': rows}
+                    ).execute()
+                    
+                    print(f"Created new sheet and logged search query with {num_results} results")
+                except Exception as create_error:
+                    if "already exists" in str(create_error):
+                        print("Sheet exists but couldn't be written to. Retrying the write operation...")
+                        # If sheet already exists, retry the main write operation
+                        retry_count += 1
+                        if retry_count < max_retries:
+                            time.sleep(1)  # Wait before retrying
+                            continue
+                    print(f"Error creating searches sheet: {str(create_error)}")
+            return
 
 
 

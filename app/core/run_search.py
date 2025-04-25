@@ -8,6 +8,7 @@ from datetime import datetime
 from app.llm.prompts import SEARCH_RESULTS_PROMPT, USER_BUSINESS_MESSAGE
 from app.core.models import parser_lead_source_list
 from app.llm.llm import _llm
+import time  # Add this import if not already present
 CHUNK_SIZE = 25
 
 
@@ -71,35 +72,135 @@ async def validate_search_results(results, existing_urls):
 async def collect_search_results(page):
     """Collect detailed information about search results"""
     results = []
-    result_elements = await page.query_selector_all('div.g')
     
-    for result in result_elements:
-        try:
-            # Get title
-            title_elem = await result.query_selector('h3')
-            title = await title_elem.inner_text() if title_elem else ''
+    try:
+        # Wait for and get the main search results container
+        await page.wait_for_selector('#search', timeout=10000)
+        
+        # Debug: Print page content to see what we're dealing with
+        print("Analyzing search results structure...")
+        
+        # Try to find visible search results with more specific selectors
+        result_elements = []
+        selectors = [
+            'div#search div.g:not([aria-hidden="true"])',  # Main results, not hidden
+            'div[data-hveid]:not([aria-hidden="true"])',   # Modern results, not hidden
+            'div.MjjYud',  # Common container for modern results
+            'div[data-sokoban-container]'  # Another modern results container
+        ]
+        
+        for selector in selectors:
+            print(f"Trying selector: {selector}")
+            elements = await page.query_selector_all(selector)
+            if elements:
+                # Verify elements are actually visible
+                visible_elements = []
+                for element in elements:
+                    try:
+                        is_visible = await element.is_visible()
+                        if is_visible:
+                            visible_elements.append(element)
+                    except Exception:
+                        continue
+                
+                if visible_elements:
+                    print(f"Found {len(visible_elements)} visible results using selector: {selector}")
+                    result_elements = visible_elements
+                    break
+                else:
+                    print(f"Found {len(elements)} elements but none are visible for selector: {selector}")
+        
+        if not result_elements:
+            print("Warning: No visible results found with any selector")
+            # Debug: Print the page HTML to understand the structure
+            html = await page.content()
+            print("Page HTML structure:")
+            print(html[:1000])  # Print first 1000 chars to see structure
+            return results
             
-            # Get URL
-            link_elem = await result.query_selector('a')
-            url = await link_elem.get_attribute('href') if link_elem else ''
-            
-            # Get description
-            desc_elem = await result.query_selector('div.VwiC3b')
-            description = await desc_elem.inner_text() if desc_elem else ''
-            
-            if title and url:  # Only add if we have at least title and URL
-                results.append({
-                    'title': title,
-                    'url': url,
-                    'description': description,
-                    'date_found': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    'status': 'new'
-                })
-        except Exception as e:
-            print(f"Error collecting result: {str(e)}")
-            continue
-    
-    return results
+        for result in result_elements:
+            try:
+                # Debug: Print the HTML of each result element
+                result_html = await result.evaluate('el => el.outerHTML')
+                print(f"\nProcessing result HTML:\n{result_html[:200]}...")  # First 200 chars
+                
+                # Get title - try multiple possible selectors
+                title = ''
+                title_selectors = [
+                    'h3:not([aria-hidden="true"])',
+                    '[role="heading"]:not([aria-hidden="true"])',
+                    'h3.r',
+                    'div[role="heading"]'
+                ]
+                for title_selector in title_selectors:
+                    title_elem = await result.query_selector(title_selector)
+                    if title_elem and await title_elem.is_visible():
+                        title = await title_elem.inner_text()
+                        if title:
+                            break
+                
+                # Get URL - try multiple possible selectors
+                url = ''
+                link_selectors = [
+                    'a[ping]:not([aria-hidden="true"])',
+                    'a[href]:not([aria-hidden="true"])',
+                    'cite'  # Sometimes URLs are in cite elements
+                ]
+                for link_selector in link_selectors:
+                    link_elem = await result.query_selector(link_selector)
+                    if link_elem and await link_elem.is_visible():
+                        url = await link_elem.get_attribute('href')
+                        if url:
+                            # Filter out Google's internal URLs and search results
+                            if url.startswith('/search') or 'google.com/search' in url:
+                                continue
+                            # Also try to get the actual URL from the ping attribute if it exists
+                            ping_url = await link_elem.get_attribute('ping')
+                            if ping_url:
+                                # Extract the actual URL from the ping attribute
+                                try:
+                                    actual_url = ping_url.split('&url=')[1].split('&')[0]
+                                    if actual_url:
+                                        url = actual_url
+                                except:
+                                    pass
+                            break
+                
+                # Get description - try multiple possible selectors
+                description = ''
+                desc_selectors = [
+                    'div.VwiC3b:not([aria-hidden="true"])', 
+                    'div[data-content-feature="1"]:not([aria-hidden="true"])',
+                    'div[style*="webkit-line-clamp"]',  # Modern snippet style
+                    'div.s'
+                ]
+                for desc_selector in desc_selectors:
+                    desc_elem = await result.query_selector(desc_selector)
+                    if desc_elem and await desc_elem.is_visible():
+                        description = await desc_elem.inner_text()
+                        if description:
+                            break
+                
+                if title and url and not url.startswith('/search'):  # Only add if we have valid title and external URL
+                    print(f"Found result: {title} ({url})")
+                    results.append({
+                        'title': title,
+                        'url': url,
+                        'description': description,
+                        'date_found': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        'status': 'new'
+                    })
+            except Exception as e:
+                print(f"Error processing individual result: {str(e)}")
+                continue
+        
+        print(f"Successfully collected {len(results)} results")
+        return results
+        
+    except Exception as e:
+        print(f"Error in collect_search_results: {str(e)}")
+        print("Full error:", str(e))
+        return results
 
 
 
@@ -163,6 +264,17 @@ async def perform_google_search(context, query, service, spreadsheet_id):
         
         await page.keyboard.press('Enter')
         await page.wait_for_selector('div#search', timeout=10000)
+
+        # Handle location popup if it appears
+        try:
+            # Look for the g-raised-button containing "Not now" text
+            not_now_button = await page.wait_for_selector('g-raised-button:has-text("Not now")', timeout=5000)
+            if not_now_button:
+                await not_now_button.click()
+                await natural_delay()
+        except Exception:
+            # If no popup or click fails, continue normally
+            pass
         
         # Get existing URLs before starting
         existing_urls = get_existing_urls(service, spreadsheet_id)
@@ -177,14 +289,6 @@ async def perform_google_search(context, query, service, spreadsheet_id):
                 scroll_amount = random.randint(200, 400)
                 await page.mouse.wheel(0, scroll_amount)
                 await asyncio.sleep(random.uniform(1, 2))
-            
-            # Get search results on current page
-            results = await page.query_selector_all('div.g')
-            for result in results:
-                title_elem = await result.query_selector('h3')
-                if title_elem:
-                    title = await title_elem.inner_text()
-                    print(f"Found result: {title}")
             
             # Collect detailed results from current page
             page_results = await collect_search_results(page)
@@ -209,13 +313,38 @@ async def perform_google_search(context, query, service, spreadsheet_id):
             
             total_pages_processed = page_num + 1
             
-            # Check if there's a next page button
-            next_button = await page.query_selector('a#pnnext')
+            # Scroll to bottom to ensure next button is in view
+            await page.evaluate('window.scrollTo(0, document.body.scrollHeight)')
+            await natural_delay()
+            
+            # Try multiple selectors for the next button
+            next_button = None
+            next_button_selectors = [
+                'a#pnnext',  # Traditional next button
+                'span:has-text("Next")',  # Text-based next button
+                '[aria-label="Next page"]',  # Accessibility next button
+                'g-raised-button:has-text("Next")'  # Modern next button
+            ]
+            
+            for selector in next_button_selectors:
+                try:
+                    button = await page.wait_for_selector(selector, timeout=5000)
+                    if button and await button.is_visible():
+                        next_button = button
+                        print(f"Found next button using selector: {selector}")
+                        break
+                except Exception:
+                    continue
+            
             if not next_button:
                 print("No more result pages available")
                 break
             
             # Add more human-like behavior before clicking next
+            await natural_delay()
+            
+            # Ensure button is in view
+            await next_button.scroll_into_view_if_needed()
             await natural_delay()
             
             # Move mouse to random position first
@@ -227,18 +356,22 @@ async def perform_google_search(context, query, service, spreadsheet_id):
             
             # Then move to and click the next button
             next_box = await next_button.bounding_box()
-            await page.mouse.move(
-                next_box['x'] + next_box['width']/2 + random.randint(-5, 5),
-                next_box['y'] + next_box['height']/2 + random.randint(-3, 3)
-            )
-            await natural_delay()
-            
-            # Click next and wait for new results
-            await next_button.click()
-            await page.wait_for_selector('div#search', timeout=10000)
-            
-            # Add longer delay between pages to appear more human-like
-            await asyncio.sleep(random.uniform(3, 5))
+            if next_box:
+                await page.mouse.move(
+                    next_box['x'] + next_box['width']/2 + random.randint(-5, 5),
+                    next_box['y'] + next_box['height']/2 + random.randint(-3, 3)
+                )
+                await natural_delay()
+                
+                # Click and wait for new results
+                await next_button.click()
+                await page.wait_for_selector('div#search', timeout=10000)
+                
+                # Add longer delay between pages to appear more human-like
+                await asyncio.sleep(random.uniform(3, 5))
+            else:
+                print("Next button not clickable, ending search")
+                break
         
         print(f"\nCollected total of {len(total_results)} results from {total_pages_processed} pages")
         
@@ -256,6 +389,9 @@ async def perform_google_search(context, query, service, spreadsheet_id):
 
 
 async def search_and_write(search_query):
+    # Start timing
+    start_time = time.time()
+    
     # Connect to Google Sheets
     service = connect_to_sheets(st.session_state.spreadsheet_id)
     
@@ -294,6 +430,138 @@ async def search_and_write(search_query):
             print("\nSearch Summary:")
             print(f"Query: {search_query}")
             print(f"Found {len(results)} relevant results")
+            
+            # Calculate elapsed time
+            elapsed_time = time.time() - start_time
+            print(f"Search completed in {elapsed_time:.2f} seconds")
+            
+            # Return search results and timing info
+            return len(results), elapsed_time
+        
+        # Return zeros if no results were found
+        return 0, time.time() - start_time
     finally:
         await context.close()
         await playwright.stop()
+
+async def run_multiple_searches(search_queries):
+    """Run multiple search queries sequentially"""
+    # Start timing the entire batch
+    batch_start_time = time.time()
+    
+    # Track results for each query
+    search_results = []
+    
+    # Connect to Google Sheets
+    service = connect_to_sheets(st.session_state.spreadsheet_id)
+    
+    for i, query in enumerate(search_queries, 1):
+        print(f"\n{'='*50}")
+        print(f"Starting search {i} of {len(search_queries)}: {query}")
+        print(f"{'='*50}\n")
+        
+        # Start timing this query
+        query_start_time = time.time()
+        
+        # Add random delay between searches
+        delay = random.uniform(10, 15)  # Increased delay between searches
+        print(f"Waiting {delay:.2f} seconds before starting next search...")
+        await asyncio.sleep(delay)
+        
+        context = None
+        playwright = None
+        search_page = None
+        
+        try:
+            print("Setting up new browser session...")
+            context, playwright = await setup_browser()
+            print("Browser session created successfully")
+            
+            search_page, results = await perform_google_search(context, query, service, st.session_state.spreadsheet_id)
+            
+            # Calculate query elapsed time
+            query_elapsed_time = time.time() - query_start_time
+            
+            if search_page and results:
+                print(f"\nSearch completed successfully:")
+                print(f"- Query: {query}")
+                print(f"- Results found: {len(results)}")
+                print(f"- Time taken: {query_elapsed_time:.2f} seconds")
+                
+                search_results.append({
+                    "query": query,
+                    "results_count": len(results),
+                    "time_taken": query_elapsed_time
+                })
+            else:
+                print(f"\nSearch completed but no results found for: {query}")
+                search_results.append({
+                    "query": query,
+                    "results_count": 0,
+                    "time_taken": query_elapsed_time
+                })
+                
+        except Exception as e:
+            print(f"\nError during search for query '{query}':")
+            print(f"Error details: {str(e)}")
+            search_results.append({
+                "query": query,
+                "results_count": 0,
+                "time_taken": time.time() - query_start_time,
+                "error": str(e)
+            })
+            
+        finally:
+            print("\nCleaning up resources...")
+            
+            # Close the search page if it exists
+            if search_page:
+                try:
+                    print("Closing search page...")
+                    await search_page.close()
+                    print("Search page closed successfully")
+                except Exception as e:
+                    print(f"Error closing search page: {str(e)}")
+            
+            # Close the context if it exists
+            if context:
+                try:
+                    print("Closing browser context...")
+                    await context.close()
+                    print("Browser context closed successfully")
+                except Exception as e:
+                    print(f"Error closing browser context: {str(e)}")
+            
+            # Stop playwright if it exists
+            if playwright:
+                try:
+                    print("Stopping playwright...")
+                    await playwright.stop()
+                    print("Playwright stopped successfully")
+                except Exception as e:
+                    print(f"Error stopping playwright: {str(e)}")
+            
+            print("Cleanup completed")
+            
+            # Add extra delay after cleanup
+            delay = random.uniform(15, 20)  # Increased post-search delay
+            print(f"Waiting {delay:.2f} seconds before next search...")
+            await asyncio.sleep(delay)
+    
+    # Calculate total elapsed time
+    total_elapsed_time = time.time() - batch_start_time
+    total_results = sum(item["results_count"] for item in search_results)
+    
+    print(f"\n{'='*50}")
+    print("Batch Summary:")
+    print(f"- Total searches completed: {len(search_queries)}")
+    print(f"- Total results found: {total_results}")
+    print(f"- Total time taken: {total_elapsed_time:.2f} seconds")
+    print(f"{'='*50}\n")
+    
+    # Return the results summary
+    return {
+        "queries": search_results,
+        "total_time": total_elapsed_time,
+        "total_results": total_results
+    }
