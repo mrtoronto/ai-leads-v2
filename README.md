@@ -1,87 +1,104 @@
 # Zakaya Lead Generation Tool
 
-A streamlit-based tool for generating and managing leads for Zakaya, including automated email drafting capabilities.
+A Flask-based web application for generating and managing leads for Zakaya, including automated email drafting capabilities.
 
 ## Features
 
-- Search for potential leads using customizable queries
-- Process and validate lead sources
-- Generate automated email drafts using Zoho Mail
-- Track lead status and email history
-- Interactive web interface
+- **Create New Sheet**: Set up Google Sheets with the required structure
+- **Generate Searches**: AI-powered search query generation based on history
+- **Run Search**: Execute single or batch searches for leads
+- **Check Sources**: Process sources to find contact information
+- **Check Leads**: Update lead information and generate call notes
+- **Send Emails**: Create Gmail drafts for selected leads with improved error handling
+- **Configure Templates**: Customize email templates and business context
+- **Session Management**: Proper caching and session handling for better performance
 
+## Quick Start
 
-## Installation
-
-0. Setup GCP:
-- Create a new project in GCP
-- Create a service account and download the credentials as a JSON
-    - No specific roles are required (i think) (but I used owner (i think))
-- Enable the following APIs:
-  - Google Sheets API - [link](https://console.cloud.google.com/apis/library/sheets.googleapis.com)
-  - Google Drive API - [link](https://console.cloud.google.com/apis/library/drive.googleapis.com)
-  
-  
-1. Make sure you have Poetry installed:
+1. **Install Poetry** (if not already installed):
 ```bash
 curl -sSL https://install.python-poetry.org | python3 -
 ```
 
-2. Clone the repository and install dependencies:
+2. **Clone and install dependencies**:
 ```bash
 cd ai-leads-v2
-poetry lock
-poetry install --no-root
+poetry install
 ```
 
-3. Install Playwright browsers:
+3. **Install Playwright browsers**:
 ```bash
 poetry run playwright install
 ```
 
-## Usage
+4. **Set up configuration**:
+   - Copy `local_settings_sample.py` to `local_settings.py`
+   - Add your Google Sheets API credentials
+   - Add your OpenAI API key
+   - Add Gmail API credentials (optional, for Zoho)
 
-Run the Streamlit app:
+5. **Run the Flask app**:
+```bash
+./run_flask.sh
+```
+   Or alternatively:
+```bash
+poetry run python flask_app.py
+```
+
+6. **Open your browser** to `http://localhost:8501`
+
+## Configuration
+
+### Required Setup
+
+1. **Google Cloud Platform**:
+   - Create a new project in GCP
+   - Create a service account and download the credentials as JSON
+   - Enable the following APIs:
+     - [Google Sheets API](https://console.cloud.google.com/apis/library/sheets.googleapis.com)
+     - [Google Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com)
+     - [Gmail API](https://console.cloud.google.com/apis/library/gmail.googleapis.com) (for email drafts)
+
+2. **OpenAI API**:
+   - Get your API key from [OpenAI](https://platform.openai.com/api-keys)
+
+3. **Update local_settings.py**:
+   - Add your Google service account credentials
+   - Add your OpenAI API key
+   - Add Gmail user email for email drafting
+
+## Key Advantages
+
+- **No timeout issues**: Long-running operations work without interruption
+- **Better error handling**: Improved classification of permanent vs transient errors
+- **Faster performance**: Efficient caching and session management
+- **Clean UI**: Responsive design that works on all devices
+- **Real-time feedback**: AJAX operations with progress indicators
+
+## Usage Flow
+
+1. **Create or connect to a Google Sheet** with your lead data
+2. **Generate searches** using AI to create targeted queries
+3. **Run searches** to find potential leads
+4. **Check sources** to extract contact information
+5. **Check leads** to validate and add call notes
+6. **Send emails** to create personalized Gmail drafts
+7. **Configure templates** to customize your outreach
+
+## Alternative: Streamlit App (Legacy)
+
+If you prefer the Streamlit interface, you can still run it:
+
 ```bash
 poetry run streamlit run main.py
 ```
 
-The app will open in your default web browser with the following features:
+**Note**: The Streamlit app may have timeout issues with long-running operations. The Flask app is recommended for production use.
 
-- **New Search**: Run new lead generation searches
-- **Check Sources**: Process and validate lead sources
-- **Expand Searches**: Generate new search queries based on history
-- **Send Emails**: Create and manage email drafts
+## Troubleshooting
 
-## Configuration
-
-The tool requires the following configuration:
-- Google Sheets API credentials
-- Zoho Mail API credentials
-- OpenAI API key
-
-Replace the placeholder values in `local_settings_sample.py` with your own credentials.
-
-Then, rename the file to `local_settings.py`. Zoho is optional but Google Sheets and OAI are required.
-
-## Flask Web Application
-
-A Flask-based web interface is now available as an alternative to the Streamlit app. The Flask app provides the same functionality with better performance and no timeout issues.
-
-### Running the Flask App
-
-1. Install dependencies using Poetry:
-```bash
-poetry install
-```
-
-2. Run the Flask app:
-```bash
-./run_flask.sh
-# or
-poetry run python flask_app.py
-```
-
-3. Open your browser to `http://localhost:5000`
-
-See `README_FLASK.md` for more details about the Flask application.
+- **Permission errors**: Ensure your Google service account has access to your sheets
+- **API rate limits**: The tool includes built-in rate limiting and retry logic
+- **Memory issues**: Large datasets are processed in batches to prevent memory problems
+- **Dead websites**: The tool now properly handles and marks permanently failed websites
