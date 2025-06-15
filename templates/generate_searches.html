@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block title %}Generate Searches - Lead Generation Tool{% endblock %}
+
+{% block content %}
+<h2>🔄 Generate Searches</h2>
+<p>Generate search queries based on search history.</p>
+
+<form id="generate-searches-form">
+    <div class="form-group">
+        <label for="additional-context">Additional Context</label>
+        <textarea id="additional-context" name="context" rows="4"
+                  placeholder="Add any specific requirements or focus areas you want the AI to consider when generating new searches..."></textarea>
+        <small style="color: #666;">This context will be used to influence the generated search queries along with the search history.</small>
+    </div>
+    
+    <button type="submit" class="btn">Generate New Queries</button>
+</form>
+
+<div id="generation-results" style="margin-top: 20px;"></div>
+
+<!-- Search History Stats -->
+<div class="stats-grid" style="margin-top: 40px;">
+    <div class="stat-card">
+        <h3>{{ stats.total }}</h3>
+        <p>Total Searches</p>
+    </div>
+    <div class="stat-card">
+        <h3>{{ stats.new }}</h3>
+        <p>New Searches</p>
+    </div>
+    <div class="stat-card">
+        <h3>{{ stats.completed }}</h3>
+        <p>Completed Searches</p>
+    </div>
+</div>
+
+<!-- Search History -->
+<div style="margin-top: 40px;">
+    <h3>Search History</h3>
+    
+    <div class="form-group">
+        <label>
+            <input type="checkbox" id="show-new-only"> Show only new searches
+        </label>
+    </div>
+    
+    {% if searches %}
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Query</th>
+                    <th>Returns</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for search in searches %}
+                <tr class="search-row" data-returns="{{ search.Returns|lower }}">
+                    <td>{{ search.Date }}</td>
+                    <td>{{ search.Query }}</td>
+                    <td>{{ search.Returns }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p>No search history found.</p>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Handle generate searches form
+handleFormSubmit('generate-searches-form', async (form) => {
+    const formData = new FormData(form);
+    const context = formData.get('context');
+    
+    const resultsDiv = document.getElementById('generation-results');
+    resultsDiv.innerHTML = '<div class="alert alert-info">Generating new search queries...</div>';
+    
+    const result = await apiCall('/generate_searches', 'POST', {
+        context: context
+    });
+    
+    if (result.success) {
+        resultsDiv.innerHTML = '<div class="alert alert-success">New queries generated successfully!</div>';
+        
+        // Reload page after 2 seconds to show updated data
+        setTimeout(() => {
+            window.location.reload();
+        }, 2000);
+    }
+});
+
+// Filter searches based on "show new only" checkbox
+document.getElementById('show-new-only')?.addEventListener('change', (e) => {
+    const rows = document.querySelectorAll('.search-row');
+    rows.forEach(row => {
+        if (e.target.checked) {
+            row.style.display = row.dataset.returns === 'new' ? '' : 'none';
+        } else {
+            row.style.display = '';
+        }
+    });
+});
+</script>
+{% endblock %} 

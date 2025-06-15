@@ -1,4 +1,3 @@
-import streamlit as st
 import asyncio
 import random
 from datetime import datetime
@@ -6,9 +5,11 @@ from app.core.models import parser_lead_source
 from app.llm.llm import _llm
 from app.utils.browser import setup_browser
 from app.utils.gcs import get_sheet_data
-
 from app.utils.gcs import connect_to_sheets, write_to_sources_sheet, write_to_leads_sheet
 from app.llm.prompts import LEAD_SOURCE_PROMPT, USER_BUSINESS_MESSAGE
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_url_for_comparison(url):
@@ -121,8 +122,8 @@ async def process_source_with_llm(source_url, source_content):
         try:
             return parser_lead_source.parse(response)
         except Exception as e:
-            print(f"Error parsing LLM response for {source_url}: {e}")
-            print(f"Raw response: {response}")
+            logger.error(f"Error parsing LLM response for {source_url}: {e}")
+            logger.error(f"Raw response: {response}")
     return None
 
 
@@ -141,7 +142,7 @@ async def process_single_source(context, service, spreadsheet_id, source, i, tot
         source.append('')
     
     url = source[url_index]
-    print(f"\nProcessing: {url} ({i}/{total})")
+    logger.info(f"\nProcessing: {url} ({i}/{total})")
     
     async with semaphore:  # Use semaphore to limit concurrent requests
         try:
@@ -150,13 +151,13 @@ async def process_single_source(context, service, spreadsheet_id, source, i, tot
             
             # Check if page load was successful
             if not response:
-                print(f"Failed to load page: {url}")
+                logger.error(f"Failed to load page: {url}")
                 raise Exception("Page load failed")
             
             # Check response status
             status = response.status
             if status == 404:
-                print(f"Page not found (404): {url}")
+                logger.info(f"Page not found (404): {url}")
                 error_update = [{
                     'title': source[title_index],
                     'url': url,
@@ -171,7 +172,7 @@ async def process_single_source(context, service, spreadsheet_id, source, i, tot
                 return
             
             if status >= 400:
-                print(f"Error loading page (HTTP {status}): {url}")
+                logger.error(f"Error loading page (HTTP {status}): {url}")
                 error_update = [{
                     'title': source[title_index],
                     'url': url,
@@ -215,7 +216,7 @@ async def process_single_source(context, service, spreadsheet_id, source, i, tot
                     'leads_found': source[leads_found_index] if len(source) > leads_found_index else '0'
                 }]
                 write_to_sources_sheet(service, spreadsheet_id, source_update)
-                print(f"Updated source title to: {page_title}")
+                logger.info(f"Updated source title to: {page_title}")
                 # Update the source array with new title for use below
                 source[title_index] = page_title
             
@@ -287,17 +288,17 @@ async def process_single_source(context, service, spreadsheet_id, source, i, tot
             # Write updates immediately after processing each source
             if new_leads:
                 write_to_leads_sheet(service, spreadsheet_id, new_leads)
-                print(f"Added {len(new_leads)} new leads from this source (before deduplication)")
+                logger.info(f"Added {len(new_leads)} new leads from this source (before deduplication)")
             
             if sources_to_update:
                 write_to_sources_sheet(service, spreadsheet_id, sources_to_update)
                 await update_all_matching_sources(service, spreadsheet_id, url)
-                print(f"Updated source and added {len(sources_to_update)-1} new sources")
+                logger.info(f"Updated source and added {len(sources_to_update)-1} new sources")
             
-            print(f"Found {total_leads} leads and {len(validation_result.AdditionalLeadSourcesFound if validation_result else [])} additional sources")
+            logger.info(f"Found {total_leads} leads and {len(validation_result.AdditionalLeadSourcesFound if validation_result else [])} additional sources")
             
         except Exception as e:
-            print(f"Error processing {url}: {str(e)}")
+            logger.error(f"Error processing {url}: {str(e)}")
             # Even on error, mark as checked to avoid infinite retries
             error_update = [{
                 'title': source[title_index],
@@ -309,7 +310,7 @@ async def process_single_source(context, service, spreadsheet_id, source, i, tot
             }]
             write_to_sources_sheet(service, spreadsheet_id, error_update)
             await update_all_matching_sources(service, spreadsheet_id, url)
-            print("Marked errored source as checked")
+            logger.info("Marked errored source as checked")
         finally:
             if 'page' in locals():
                 await page.close()
@@ -321,7 +322,7 @@ async def process_sources(context, service, spreadsheet_id):
     # Get sources
     sources = get_sheet_data(service, spreadsheet_id, 'sources!A:F')
     if len(sources) <= 1:  # Only headers or empty
-        print("No sources to process")
+        logger.info("No sources to process")
         return
     
     headers = sources[0]
@@ -331,15 +332,18 @@ async def process_sources(context, service, spreadsheet_id):
     sources_to_check = [source for source in sources[1:] if source[status_index] != 'checked']
     
     if not sources_to_check:
-        print("No new sources to process")
+        logger.info("No new sources to process")
         return
+    
+    # Reverse the order to process from bottom to top (newest first)
+    sources_to_check.reverse()
     
     # Create a semaphore to limit concurrency
     # Adjust the number based on your system's capacity and API rate limits
-    max_concurrent = 5
+    max_concurrent = 10
     semaphore = asyncio.Semaphore(max_concurrent)
     
-    print(f"Processing {len(sources_to_check)} sources with max {max_concurrent} concurrent tasks")
+    logger.info(f"Processing {len(sources_to_check)} sources from bottom to top with max {max_concurrent} concurrent tasks")
     
     # Create tasks for each source
     tasks = []
@@ -353,7 +357,7 @@ async def process_sources(context, service, spreadsheet_id):
     # Run tasks concurrently
     await asyncio.gather(*tasks)
     
-    print("\nFinished processing all sources")
+    logger.info("\nFinished processing all sources")
 
 
 async def update_all_matching_sources(service, spreadsheet_id, target_url):
@@ -413,20 +417,20 @@ async def update_all_matching_sources(service, spreadsheet_id, target_url):
     # Write updates if any matching sources were found
     if sources_to_update:
         write_to_sources_sheet(service, spreadsheet_id, sources_to_update)
-        print(f"Updated {len(sources_to_update)} additional sources with normalized URL: {normalized_target}")
+        logger.info(f"Updated {len(sources_to_update)} additional sources with normalized URL: {normalized_target}")
 
 
-async def check_sources():
+async def check_sources(spreadsheet_id):
     """Process all sources in the sources sheet to find contact information"""
     # Connect to Google Sheets
-    service = connect_to_sheets(st.session_state.spreadsheet_id)
+    service = connect_to_sheets(spreadsheet_id)
     
     # Set up browser
     context, playwright = await setup_browser()
     try:
-        print("\nChecking sources for contact information...")
-        await process_sources(context, service, st.session_state.spreadsheet_id)
-        print("\nFinished checking sources")
+        logger.info("\nChecking sources for contact information...")
+        await process_sources(context, service, spreadsheet_id)
+        logger.info("\nFinished checking sources")
     finally:
         await context.close()
         await playwright.stop()

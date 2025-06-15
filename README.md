@@ -63,3 +63,25 @@ The tool requires the following configuration:
 Replace the placeholder values in `local_settings_sample.py` with your own credentials.
 
 Then, rename the file to `local_settings.py`. Zoho is optional but Google Sheets and OAI are required.
+
+## Flask Web Application
+
+A Flask-based web interface is now available as an alternative to the Streamlit app. The Flask app provides the same functionality with better performance and no timeout issues.
+
+### Running the Flask App
+
+1. Install dependencies using Poetry:
+```bash
+poetry install
+```
+
+2. Run the Flask app:
+```bash
+./run_flask.sh
+# or
+poetry run python flask_app.py
+```
+
+3. Open your browser to `http://localhost:5000`
+
+See `README_FLASK.md` for more details about the Flask application.

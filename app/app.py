@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import logging
 
 import asyncio
 from app.core.check_sources import check_sources
@@ -444,14 +445,14 @@ def app():
                             df['Org Name'].fillna('').str.lower().str.contains(search_query.lower()) |
                             df['Link'].fillna('').str.lower().str.contains(search_query.lower())
                         )
-                        filtered_df = df[mask]
+                        filtered_df = df[mask].copy()  # Create an explicit copy
                         if len(filtered_df) == 0:
                             st.info("No matches found.")
-                            display_df = df  # Show all results if no matches
+                            display_df = df.copy()  # Create an explicit copy
                         else:
                             display_df = filtered_df
                     else:
-                        display_df = df
+                        display_df = df.copy()  # Create an explicit copy
                     
                     # Create selection column
                     display_df['Select'] = False
@@ -697,14 +698,14 @@ def app():
                             df['Org Name'].fillna('').str.lower().str.contains(search_query.lower()) |
                             df['Link'].fillna('').str.lower().str.contains(search_query.lower())
                         )
-                        filtered_df = df[mask]
+                        filtered_df = df[mask].copy()  # Create an explicit copy
                         if len(filtered_df) == 0:
                             st.info("No matches found.")
-                            display_df = df  # Show all results if no matches
+                            display_df = df.copy()  # Create an explicit copy
                         else:
                             display_df = filtered_df
                     else:
-                        display_df = df
+                        display_df = df.copy()  # Create an explicit copy
                     
                     # Create the dataframe editor with a key that doesn't change with selections
                     edited_df = st.data_editor(
@@ -727,37 +728,59 @@ def app():
                     # Create batch processing button
                     if len(selected_rows) > 0:
                         if st.button(f"Process {len(selected_rows)} Selected Leads", type="primary", key="gmail_process_button"):
-                            with st.spinner("Creating email drafts in Gmail..."):
-                                # Prepare contacts list with normalized URLs
-                                contacts = list(zip(
-                                    [normalize_url(url) for url in selected_rows['Link'].tolist()],
-                                    selected_rows['Email'].tolist()
-                                ))
+                            # Prepare contacts list with normalized URLs
+                            contacts = list(zip(
+                                [normalize_url(url) for url in selected_rows['Link'].tolist()],
+                                selected_rows['Email'].tolist(),
+                                selected_rows['Notes'].tolist() if 'Notes' in selected_rows else [''] * len(selected_rows)
+                            ))
+                            
+                            # Add a warning about not navigating away
+                            st.warning("⚠️ Processing emails... Please do not navigate away from this page or refresh until complete!")
+                            
+                            # Create progress indicators
+                            progress_bar = st.progress(0)
+                            status_text = st.empty()
+                            
+                            status_text.text(f"Starting to process {len(contacts)} email drafts...")
+                            
+                            try:
+                                # Import the Gmail drafts function
+                                from app.core.create_gmail_drafts import create_multiple_gmail_drafts
                                 
-                                try:
-                                    # Import the Gmail drafts function
-                                    from app.core.create_gmail_drafts import create_multiple_gmail_drafts
-                                    
-                                    # Create drafts
-                                    create_multiple_gmail_drafts(
-                                        service_account_info=firestore_creds,
-                                        user_email=gmail_user_email,
-                                        contacts=contacts,
-                                        from_email=from_email if from_email else None,
-                                        spreadsheet_id=st.session_state.spreadsheet_id
-                                    )
-                                    
-                                    # Force a cache refresh after processing
-                                    load_all_sheets(service, st.session_state.spreadsheet_id, force_refresh=True)
-                                    
-                                    st.success(f"Successfully created {len(contacts)} email drafts in Gmail!")
-                                    
-                                    # Clear selections
-                                    st.session_state.selected_leads_gmail = []
-                                    st.rerun()
-                                    
-                                except Exception as e:
-                                    st.error(f"Error creating Gmail drafts: {str(e)}")
+                                # Create drafts
+                                create_multiple_gmail_drafts(
+                                    service_account_info=firestore_creds,
+                                    user_email=gmail_user_email,
+                                    contacts=contacts,
+                                    from_email=from_email if from_email else None,
+                                    spreadsheet_id=st.session_state.spreadsheet_id
+                                )
+                                
+                                # Update progress to complete
+                                progress_bar.progress(1.0)
+                                status_text.text("✅ Processing complete!")
+                                
+                                # Force a cache refresh after processing
+                                load_all_sheets(service, st.session_state.spreadsheet_id, force_refresh=True)
+                                
+                                st.success(f"Successfully created {len(contacts)} email drafts in Gmail!")
+                                
+                                # Clear selections
+                                st.session_state.selected_leads_gmail = []
+                                st.rerun()
+                                
+                            except Exception as e:
+                                error_msg = str(e)
+                                # Handle session stop gracefully
+                                if 'streamlit' in error_msg.lower() and 'stop' in error_msg.lower():
+                                    status_text.text("⏹️ Process was stopped")
+                                    st.info("✋ Process was stopped. You can restart it by clicking the button again.")
+                                else:
+                                    status_text.text("❌ Error occurred")
+                                    st.error(f"Error creating Gmail drafts: {error_msg}")
+                                # Also log the full error for debugging
+                                logging.error(f"Gmail drafts error: {error_msg}", exc_info=True)
                     else:
                         st.info("Select leads to process by checking the boxes in the table.")
                 else:

@@ -1,13 +1,15 @@
 import json
-import streamlit as st
 from app.core.models import parser_search_query_list
 from app.llm.llm import _llm
 from app.utils.gcs import get_sheet_data, write_to_suggested_searches_sheet, connect_to_sheets
 from app.llm.prompts import USER_BUSINESS_MESSAGE, EXPAND_SEARCH_PROMPT
+import logging
+
+logger = logging.getLogger(__name__)
 
 async def generate_search_queries(service, spreadsheet_id, additional_context=""):
     """Generate new search queries based on search history"""
-    print("\nAnalyzing search history to generate new queries...")
+    logger.info("\nAnalyzing search history to generate new queries...")
     
     # Get search history
     searches = get_sheet_data(service, spreadsheet_id, 'searches!A:C')
@@ -41,29 +43,29 @@ async def generate_search_queries(service, spreadsheet_id, additional_context=""
     if response:
         try:
             result = parser_search_query_list.parse(response)
-            print(f"\nGenerated {len(result.SearchQueries)} new search queries:")
+            logger.info(f"\nGenerated {len(result.SearchQueries)} new search queries:")
             for query in result.SearchQueries:
-                print(f"- {query}")
+                logger.info(f"- {query}")
             return result.SearchQueries
         except Exception as e:
-            print(f"Error parsing LLM response: {e}")
-            print(f"Raw response: {response}")
+            logger.error(f"Error parsing LLM response: {e}")
+            logger.error(f"Raw response: {response}")
     
     return []
 
 
 
-async def expand_searches(additional_context=""):
+async def expand_searches(spreadsheet_id, additional_context=""):
     """Generate new search queries based on search history and write them to searches sheet"""
     # Connect to Google Sheets
-    service = connect_to_sheets(st.session_state.spreadsheet_id)
+    service = connect_to_sheets(spreadsheet_id)
     
     # Generate new queries
-    new_queries = await generate_search_queries(service, st.session_state.spreadsheet_id, additional_context)
+    new_queries = await generate_search_queries(service, spreadsheet_id, additional_context)
     
     if new_queries:
-        print(f"\nWriting {len(new_queries)} suggested queries to sheet...")
-        write_to_suggested_searches_sheet(service, st.session_state.spreadsheet_id, new_queries)
-        print("\nSuggested queries have been written to the 'searches' sheet for review")
+        logger.info(f"\nWriting {len(new_queries)} suggested queries to sheet...")
+        write_to_suggested_searches_sheet(service, spreadsheet_id, new_queries)
+        logger.info("\nSuggested queries have been written to the 'searches' sheet for review")
     else:
-        print("No new search queries generated")
+        logger.info("No new search queries generated")

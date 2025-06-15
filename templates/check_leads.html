@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% block title %}Check Leads - Lead Generation Tool{% endblock %}
+
+{% block content %}
+<h2>📞 Check Leads</h2>
+<p>Process selected leads to update contact information and generate call notes.</p>
+
+<!-- Lead Stats -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <h3>{{ stats.available }}</h3>
+        <p>Available Leads</p>
+    </div>
+    <div class="stat-card">
+        <h3>{{ stats.checked }}</h3>
+        <p>Already Checked</p>
+    </div>
+</div>
+
+{% if leads %}
+<!-- Search Box -->
+<div class="search-box" style="margin-top: 30px;">
+    <input type="text" id="leads-search" placeholder="Search leads by name or website...">
+</div>
+
+<!-- Leads Table -->
+<div class="table-container">
+    <table id="leads-table">
+        <thead>
+            <tr>
+                <th><input type="checkbox"></th>
+                <th data-field="Org Name">Org Name</th>
+                <th data-field="Link">Website</th>
+                <th data-field="Phone">Phone</th>
+                <th data-field="Email">Email</th>
+                <th data-field="Notes">Notes</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for lead in leads %}
+            <tr>
+                <td><input type="checkbox"></td>
+                <td>{{ lead['Org Name'] or '' }}</td>
+                <td><a href="{{ lead['Link'] or '#' }}" target="_blank">{{ (lead['Link'] or '')[:40] }}{% if (lead['Link'] or '')|length > 40 %}...{% endif %}</a></td>
+                <td>{{ lead['Phone'] or '' }}</td>
+                <td>{{ lead['Email'] or '' }}</td>
+                <td>{{ (lead['Notes'] or '')[:50] }}{% if (lead['Notes'] or '')|length > 50 %}...{% endif %}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div style="margin-top: 20px;">
+    <button id="leads-table-action" class="btn" disabled>
+        Process <span id="leads-table-count">0</span> Selected Leads
+    </button>
+</div>
+
+<div id="check-results" style="margin-top: 20px;"></div>
+
+{% else %}
+<p>No leads available for checking (all leads have been checked).</p>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('leads-table-action')?.addEventListener('click', async () => {
+    const selectedRows = getSelectedRows('leads-table');
+    
+    if (selectedRows.length === 0) {
+        showAlert('Please select leads to process', 'warning');
+        return;
+    }
+    
+    const btn = document.getElementById('leads-table-action');
+    const resultsDiv = document.getElementById('check-results');
+    
+    btn.disabled = true;
+    btn.innerHTML = `Processing ${selectedRows.length} leads... <span class="loading"></span>`;
+    resultsDiv.innerHTML = '<div class="alert alert-info">Checking leads for contact information and generating notes...</div>';
+    
+    try {
+        const result = await apiCall('/check_leads', 'POST', {
+            leads: selectedRows
+        });
+        
+        if (result.success) {
+            resultsDiv.innerHTML = `<div class="alert alert-success">Successfully processed ${result.count} leads!</div>`;
+            
+            // Reload page after 2 seconds to show updated data
+            setTimeout(() => {
+                window.location.reload();
+            }, 2000);
+        }
+    } catch (error) {
+        resultsDiv.innerHTML = `<div class="alert alert-error">Error: ${error.message}</div>`;
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = 'Process <span id="leads-table-count">0</span> Selected Leads';
+        updateSelectionCount('leads-table');
+    }
+});
+</script>
+{% endblock %} 

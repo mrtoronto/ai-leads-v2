@@ -1,5 +1,4 @@
 import base64
-import streamlit as st
 import requests
 from typing import List, Dict, Tuple, Optional, Any
 import logging
@@ -15,56 +14,28 @@ import sys
 import random
 import time
 import re
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
 
 # --- Configuration ---
 # Maximum number of concurrent tasks (website fetching, email creation)
-MAX_CONCURRENT_WORKERS = 10
+MAX_CONCURRENT_WORKERS = 3  # Reduced from 10 to avoid network congestion
+# Session recreation interval to prevent stale connections
+SESSION_REFRESH_INTERVAL = 25  # Refresh session every 25 contacts
 # ---
 
-# Ensure PyJWT and cryptography are installed
+# Ensure required packages are available
 try:
     import jwt
-    # Test if we have cryptography by attempting to use RS256
-    try:
-        jwt.encode({"test": "payload"}, "test-key", algorithm="RS256")
-    except Exception as e:
-        if "Algorithm 'RS256' could not be found" in str(e):
-            st.error("Cryptography package is required. Installing now...")
-            import subprocess
-            try:
-                subprocess.check_call([sys.executable, "-m", "pip", "install", "cryptography"])
-                st.success("Cryptography package installed successfully!")
-            except Exception as e:
-                st.error(f"Failed to install cryptography: {str(e)}")
-                st.error("Please run 'pip install cryptography' manually and restart the application.")
-                raise ImportError("Cryptography is required but could not be installed automatically")
 except ImportError:
-    # More robust error handling for PyJWT
-    st.error("PyJWT package is required. Installing now...")
-    import subprocess
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "PyJWT[crypto]"])
-        import jwt
-        st.success("PyJWT with crypto installed successfully!")
-    except Exception as e:
-        st.error(f"Failed to install PyJWT: {str(e)}")
-        st.error("Please run 'pip install PyJWT[crypto]' manually and restart the application.")
-        raise ImportError("PyJWT is required but could not be installed automatically")
+    logging.error("PyJWT package is required. Please run 'pip install PyJWT[crypto]' and restart.")
+    raise ImportError("PyJWT is required")
 
-# Ensure aiohttp is installed
 try:
     import aiohttp
 except ImportError:
-    st.error("aiohttp package is required. Installing now...")
-    import subprocess
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "aiohttp"])
-        import aiohttp
-        st.success("aiohttp installed successfully!")
-    except Exception as e:
-        st.error(f"Failed to install aiohttp: {str(e)}")
-        st.error("Please run 'pip install aiohttp' manually and restart the application.")
-        raise ImportError("aiohttp is required but could not be installed automatically")
+    logging.error("aiohttp package is required. Please run 'pip install aiohttp' and restart.")
+    raise ImportError("aiohttp is required")
 
 from app.local_settings import (
     OPENAI_API_KEY_GPT4,
@@ -75,13 +46,16 @@ from app.local_settings import (
 from app.utils.gcs import connect_to_sheets, get_sheet_data
 from app.utils.sheet_cache import get_sheet_data_cached, update_cache_after_write
 
-from app.core.create_zoho_drafts import (
+from app.core.email_utils import (
     normalize_url,
     analyze_website_content,
     select_email_template,
     customize_template,
     refine_template_customization,
-    create_customized_email,
+    create_customized_email
+)
+
+from app.core.create_zoho_drafts import (
     update_lead_emailed_status,
     check_if_already_emailed
 )
@@ -145,6 +119,26 @@ def get_access_token(service_account_info: Dict, user_email: str) -> str:
         logging.error(f"Error creating access token: {str(e)}")
         raise
 
+async def refresh_access_token(service_account_info: Dict, user_email: str) -> str:
+    """
+    Refresh the Gmail API access token
+    
+    Args:
+        service_account_info: Service account credentials as a dictionary
+        user_email: Email to impersonate
+        
+    Returns:
+        str: New access token
+    """
+    try:
+        logging.info("Refreshing Gmail API access token...")
+        new_token = get_access_token(service_account_info, user_email)
+        logging.info("Successfully refreshed Gmail API access token")
+        return new_token
+    except Exception as e:
+        logging.error(f"Failed to refresh access token: {str(e)}")
+        raise TokenExpiredError(f"Failed to refresh access token: {str(e)}")
+
 # Add a function to validate email addresses
 def is_valid_email(email: str) -> bool:
     """
@@ -180,64 +174,70 @@ def is_transient_error(error_message: str) -> bool:
         
     error_lower = error_message.lower()
     
-    # List of errors that we know are permanent
+    # Permanent errors (should not retry) - check these first
     permanent_patterns = [
-        'does not exist',
-        'not found',
         'invalid email',
-        'invalid to header',
-        'domain not found',
-        '404',
-        'no such host',
-        'ssl/tls alert handshake failure',  # Added: SSL handshake failures are permanent
-        'sslv3_alert_handshake_failure',    # Added: Another form of SSL failure
-        'port 443',                         # Added: Port 443 issues usually indicate broken HTTPS
-        'certificate verify failed',        # Added: Bad certificates are usually permanent
-        'hostname mismatch',                # Added: Hostname mismatches are permanent
-        'certificate has expired',           # Added: Expired certificates are permanent
+        'malformed',
+        'not found',
+        'forbidden',
+        'unauthorized',
+        'permission denied',
+        'invalid request',
+        'bad request',
+        'nodename nor servname provided',  # DNS resolution failure
+        'name or service not known',       # Another DNS failure variant
+        'no address associated with hostname',  # DNS failure
+        'name resolution failed',          # DNS failure
+        'host not found',                  # DNS failure
+        'domain not found',                # DNS failure
+        'cannot resolve hostname',         # DNS failure
+        'getaddrinfo failed',             # DNS failure variant
+        'cannot connect to host',         # Connection failure - this should be permanent
+        'connection refused',             # Often permanent when site is down
+        'ssl',                           # SSL errors are usually permanent config issues
+        'certificate',                   # Certificate errors are permanent
+        'tlsv1_alert',                   # SSL/TLS errors are permanent
+        'ssl handshake',                 # SSL handshake failures are permanent
+        '[none]',                        # The [None] error indicates permanent failure
+        'internal error',                # SSL internal errors are permanent
     ]
     
-    # First check if it's explicitly a permanent error
-    if any(pattern in error_lower for pattern in permanent_patterns):
-        return False
-        
-    # List of errors that are definitely transient
-    transient_patterns = [
-        'connection reset',
-        'connection refused', 
-        'temporarily unavailable',
-        'retry',
-        'service unavailable',
-        'unreachable',
-        'timeout',
-        'eof',
-        'broken pipe',
-        '500',
-        '502',
-        '503',
-        '504'
-    ]
-    
-    # Then check if it's a known transient error
-    if any(pattern in error_lower for pattern in transient_patterns):
-        return True
-        
-    # For DNS errors, do a more careful check
-    if 'nodename nor servname provided' in error_lower:
-        try:
-            domain = error_lower.split('host ')[1].split(':')[0]
-            import socket
-            socket.gethostbyname(domain)
-            return True
-        except:
+    # Check if any permanent pattern matches first
+    for pattern in permanent_patterns:
+        if pattern in error_lower:
             return False
-            
-    # By default, treat unknown errors as transient
-    return True
+    
+    # Network-related transient errors (much more limited now)
+    transient_patterns = [
+        'timeout',                        # Only timeouts should be considered transient
+        'network unreachable',           # Network routing issues might be temporary
+        'temporary failure',
+        'service unavailable',
+        'bad gateway',
+        'gateway timeout',
+        'too many requests',
+        'rate limit',
+        'quota exceeded',
+        'server error',
+        'internal server error',
+        'unexpected result format',
+        'token may have expired',
+        'authentication failed',
+    ]
+    
+    # Check if any transient pattern matches
+    for pattern in transient_patterns:
+        if pattern in error_lower:
+            return True
+    
+    # If uncertain, err on the side of being PERMANENT (mark as emailed) to avoid endless retries
+    # This is the key change - when in doubt, mark as done rather than keep retrying
+    return False
 
 async def create_draft_with_http_async(session: aiohttp.ClientSession, access_token: str, 
-                                  to_email: str, subject: str, content: str, from_email: str
-                                  ) -> Tuple[bool, str]:
+                                  to_email: str, subject: str, content: str, from_email: str,
+                                  service_account_info: Dict = None, user_email: str = None
+                                  ) -> Tuple[bool, str, str]:
     """
     Create a draft email using direct HTTP requests to Gmail API (async version)
     Uses the provided aiohttp session.
@@ -249,18 +249,21 @@ async def create_draft_with_http_async(session: aiohttp.ClientSession, access_to
         subject: Email subject
         content: HTML content of email
         from_email: Sender email
+        service_account_info: Service account credentials for token refresh
+        user_email: User email for token refresh
         
     Returns:
-        Tuple[bool, str]: (Success status, Error message if any)
+        Tuple[bool, str, str]: (Success status, Error message if any, New access token if refreshed)
     """
     error_msg = ""
-    max_api_retries = 1 # Allow one retry specifically for API timeouts/5xx
+    max_api_retries = 2 # Increase retries to allow for token refresh
+    current_token = access_token
     
     for attempt in range(max_api_retries + 1):
         try:
             # Validate email first
             if not is_valid_email(to_email):
-                return False, f"Invalid email format: {to_email}"
+                return False, f"Invalid email format: {to_email}", current_token
             
             # Create email MIME message
             message = MIMEMultipart('alternative')
@@ -279,7 +282,7 @@ async def create_draft_with_http_async(session: aiohttp.ClientSession, access_to
             url = 'https://gmail.googleapis.com/gmail/v1/users/me/drafts'
             # Use passed-in session's headers + add specific ones
             headers = {
-                'Authorization': f'Bearer {access_token}',
+                'Authorization': f'Bearer {current_token}',
                 'Content-Type': 'application/json'
             }
             
@@ -300,16 +303,26 @@ async def create_draft_with_http_async(session: aiohttp.ClientSession, access_to
                 # Check if request was successful
                 if response.status in (200, 201):
                     logging.info(f"Successfully created draft for {to_email}")
-                    return True, ""
+                    return True, "", current_token
                 else:
                     response_text = await response.text()
                     error_msg = f"Error creating draft: {response.status} - {response_text}"
                     logging.error(error_msg)
                     
-                    # Check for auth errors (401)
-                    if response.status == 401:
-                        # Don't raise here, just return the error to be handled by process_contact
-                        return False, f"TokenExpiredError: Gmail API token may have expired ({error_msg})"
+                    # Check for auth errors (401) or timeout-related errors
+                    if response.status == 401 or "token" in error_msg.lower():
+                        if service_account_info and user_email and attempt < max_api_retries:
+                            try:
+                                logging.info("Attempting to refresh access token due to auth error")
+                                current_token = await refresh_access_token(service_account_info, user_email)
+                                await asyncio.sleep(2)  # Short delay before retry
+                                continue  # Retry with new token
+                            except Exception as refresh_error:
+                                error_msg = f"Token refresh failed: {str(refresh_error)}"
+                                logging.error(error_msg)
+                                return False, error_msg, current_token
+                        else:
+                            return False, f"TokenExpiredError: Gmail API token may have expired ({error_msg})", current_token
                     
                     # Treat other non-success as failures for this attempt
                     # Only retry on 5xx server errors
@@ -320,29 +333,42 @@ async def create_draft_with_http_async(session: aiohttp.ClientSession, access_to
                         continue # Go to next attempt in the loop
                     else:
                         # Permanent client error or final attempt failed
-                        return False, error_msg
+                        return False, error_msg, current_token
                 
         except TokenExpiredError as e: # Should not be raised anymore, but keep catch just in case
             logging.error(f"TokenExpiredError caught unexpectedly: {e}")
-            return False, str(e)
+            return False, str(e), current_token
         
         except asyncio.TimeoutError as e:
             error_msg = f"Timeout error connecting to Gmail API: {str(e)}"
             logging.error(error_msg)
-            # Retry once on timeout
-            if attempt < max_api_retries:
-                await asyncio.sleep(3 * (attempt + 1))
-                continue # Go to next attempt in the loop
+            
+            # Try to refresh token on timeout if we have credentials and retries left
+            if service_account_info and user_email and attempt < max_api_retries:
+                try:
+                    logging.info("Attempting to refresh access token due to timeout")
+                    current_token = await refresh_access_token(service_account_info, user_email)
+                    await asyncio.sleep(3 * (attempt + 1))  # Longer delay after timeout
+                    continue  # Retry with new token
+                except Exception as refresh_error:
+                    error_msg = f"Token refresh after timeout failed: {str(refresh_error)}"
+                    logging.error(error_msg)
+                    return False, error_msg, current_token
             else:
-                return False, error_msg # Final attempt timed out
+                # Retry once more on timeout without refresh if no credentials
+                if attempt < max_api_retries:
+                    await asyncio.sleep(3 * (attempt + 1))
+                    continue
+                else:
+                    return False, error_msg, current_token # Final attempt timed out
             
         except Exception as e:
             error_msg = f"Error in create_draft_with_http_async: {str(e)}"
             logging.error(error_msg, exc_info=True) # Log full traceback
-            return False, error_msg
+            return False, error_msg, current_token
 
     # If loop finishes without returning (shouldn't happen with retry logic)
-    return False, f"Failed after {max_api_retries + 1} attempts: {error_msg}"
+    return False, f"Failed after {max_api_retries + 1} attempts: {error_msg}", current_token
 
 class ServiceAuthError(Exception):
     """Base class for service authentication errors"""
@@ -355,6 +381,54 @@ class TokenExpiredError(ServiceAuthError):
 class SheetsAuthError(ServiceAuthError):
     """Raised when the Sheets API authentication fails"""
     pass
+
+async def is_session_healthy(session: aiohttp.ClientSession) -> bool:
+    """
+    Check if the aiohttp session is still healthy
+    
+    Args:
+        session: The aiohttp ClientSession to check
+        
+    Returns:
+        bool: True if session is healthy, False otherwise
+    """
+    try:
+        # Simple health check - try to make a minimal request
+        async with session.get('https://httpbin.org/status/200', timeout=aiohttp.ClientTimeout(total=5)) as response:
+            return response.status == 200
+    except Exception:
+        return False
+
+async def create_fresh_session() -> aiohttp.ClientSession:
+    """
+    Create a fresh aiohttp session with proper configuration
+    
+    Returns:
+        aiohttp.ClientSession: A new configured session
+    """
+    # Create a single connector for all requests, respecting the concurrency limit
+    conn = aiohttp.TCPConnector(
+        limit=MAX_CONCURRENT_WORKERS, 
+        limit_per_host=2,  # Max 2 connections per host to avoid overwhelming servers
+        ssl=True,
+        keepalive_timeout=30,  # Keep connections alive for 30s
+        enable_cleanup_closed=True
+    )
+    
+    # Much more reasonable timeout for normal websites
+    timeout = aiohttp.ClientTimeout(
+        total=30,      # Overall request timeout - reduced from 90s
+        connect=10,    # Connection establishment timeout
+        sock_read=15   # Socket read timeout
+    )
+    
+    return aiohttp.ClientSession(
+        headers={
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+        },
+        timeout=timeout,
+        connector=conn
+    )
 
 async def refresh_sheets_service(spreadsheet_id: str) -> Any:
     """
@@ -431,7 +505,8 @@ async def fetch_website_with_retries(session: aiohttp.ClientSession, url: str, m
                 headers=headers,
                 raise_for_status=False # Don't raise for non-200 status codes
             ) as response:
-                if response.status == 200:
+                # Accept all 2xx status codes as success (200, 201, 202, etc.)
+                if 200 <= response.status < 300:
                     # Handle potential encoding errors gracefully
                     content = await response.text(errors='replace')
                     if content and content.strip():
@@ -488,11 +563,13 @@ async def fetch_website_with_retries(session: aiohttp.ClientSession, url: str, m
     return False, "", f"Failed to fetch after {max_retries + 1} attempts. Last error: {last_error}"
 
 async def process_contact(session: aiohttp.ClientSession, sheets_service, spreadsheet_id, 
-                          access_token: str, website: str, email: str, 
-                          sender_email: str, i: int, total: int, semaphore) -> Tuple[bool, float, str]:
+                          access_token: str, website: str, email: str, notes: str, 
+                          sender_email: str, i: int, total: int, semaphore,
+                          service_account_info: Dict, user_email: str) -> Tuple[bool, float, str, str]:
     """Process a single contact and create a draft email"""
     start_time = time.time()
     error_message = ""
+    current_token = access_token
     
     async with semaphore:  # Use semaphore to limit concurrent requests
         try:
@@ -504,20 +581,20 @@ async def process_contact(session: aiohttp.ClientSession, sheets_service, spread
                 logging.error(error_message)
                 # Mark as emailed since this is a permanent error
                 try:
-                    await update_lead_emailed_status(sheets_service, spreadsheet_id, email)
+                    update_lead_emailed_status(sheets_service, spreadsheet_id, email)
                 except SheetsAuthError as e:
                     # Propagate sheets auth errors to be handled by batch processor
                     raise
-                return False, time.time() - start_time, error_message
+                return False, time.time() - start_time, error_message, current_token
             
             # Check if already emailed using cached data
             if check_if_already_emailed(sheets_service, spreadsheet_id, email):
                 logging.info(f"Skipping {email} - already emailed")
-                return True, time.time() - start_time, "Already emailed"
+                return True, time.time() - start_time, "Already emailed", current_token
                 
-            # Get website content (now only tries once with ~20s timeout)
+            # Get website content with retries for transient failures
             try:
-                success, page_content, fetch_error = await fetch_website_with_retries(session, website)
+                success, page_content, fetch_error = await fetch_website_with_retries(session, website, max_retries=1)
             except Exception as e:
                 # Catch potential errors during the fetch itself
                 success = False
@@ -532,18 +609,18 @@ async def process_contact(session: aiohttp.ClientSession, sheets_service, spread
                 # Only mark as emailed if this is a permanent error
                 if not is_transient_error(fetch_error):
                     try:
-                        await update_lead_emailed_status(sheets_service, spreadsheet_id, email)
+                        update_lead_emailed_status(sheets_service, spreadsheet_id, email)
                         logging.info(f"Marked {email} as emailed due to permanent website failure: {fetch_error}")
                     except Exception as e:
                         logging.error(f"Failed to mark {email} as emailed: {str(e)}")
                 else:
                     logging.warning(f"Not marking {email} as emailed due to transient error: {fetch_error}")
                 
-                return False, time.time() - start_time, error_message
+                return False, time.time() - start_time, error_message, current_token
             
             # Create customized email
             try:
-                subject, content = create_customized_email(website, email, page_content)
+                subject, content = create_customized_email(website, email, page_content, notes)
             except Exception as custom_error:
                 error_message = f"Failed to create customized email: {str(custom_error)}"
                 logging.error(error_message)
@@ -551,31 +628,38 @@ async def process_contact(session: aiohttp.ClientSession, sheets_service, spread
                 # Only mark as emailed if this is a permanent error
                 if not is_transient_error(str(custom_error)):
                     try:
-                        await update_lead_emailed_status(sheets_service, spreadsheet_id, email)
+                        update_lead_emailed_status(sheets_service, spreadsheet_id, email)
                         logging.info(f"Marked {email} as emailed due to permanent customization error")
                     except Exception as e:
                         logging.error(f"Failed to mark {email} as emailed: {str(e)}")
-                return False, time.time() - start_time, error_message
+                return False, time.time() - start_time, error_message, current_token
             
             # Create draft directly with HTTP and handle retries
-            success, api_error = await create_draft_with_http_async(
+            success, api_error, new_token = await create_draft_with_http_async(
                 session=session,
-                access_token=access_token,
+                access_token=current_token,
                 to_email=email,
                 subject=subject,
                 content=content,
-                from_email=sender_email
+                from_email=sender_email,
+                service_account_info=service_account_info,
+                user_email=user_email
             )
+            
+            # Update current token if it was refreshed
+            if new_token != current_token:
+                current_token = new_token
+                logging.info(f"Updated access token for {email}")
             
             if success:
                 # Only mark as emailed if the draft was successfully created
                 try:
-                    await update_lead_emailed_status(sheets_service, spreadsheet_id, email)
+                    update_lead_emailed_status(sheets_service, spreadsheet_id, email)
                     elapsed = time.time() - start_time
                     logging.info(f"Created draft email for {email} ({website}) in {elapsed:.2f}s")
                 except Exception as e:
                     logging.error(f"Failed to mark {email} as emailed after successful draft: {str(e)}")
-                return True, time.time() - start_time, ""
+                return True, time.time() - start_time, "", current_token
             else:
                 error_message = f"Failed to create draft: {api_error}"
                 logging.error(error_message)
@@ -583,7 +667,7 @@ async def process_contact(session: aiohttp.ClientSession, sheets_service, spread
                 # Only mark as emailed for permanent API errors
                 if not is_transient_error(api_error):
                     try:
-                        await update_lead_emailed_status(sheets_service, spreadsheet_id, email)
+                        update_lead_emailed_status(sheets_service, spreadsheet_id, email)
                         logging.info(f"Marked {email} as emailed due to permanent API error")
                     except Exception as e:
                         logging.error(f"Failed to mark {email} as emailed: {str(e)}")
@@ -591,7 +675,7 @@ async def process_contact(session: aiohttp.ClientSession, sheets_service, spread
                     logging.warning(f"Not marking {email} as emailed due to transient error: {api_error}")
                     
                 # Ensure we return failure status and message
-                return False, time.time() - start_time, error_message
+                return False, time.time() - start_time, error_message, current_token
             
         except TokenExpiredError:
             # Let token errors propagate up
@@ -600,16 +684,23 @@ async def process_contact(session: aiohttp.ClientSession, sheets_service, spread
         except SheetsAuthError:
             # Let sheets auth errors propagate up
             raise
-            
+        
+        # Handle Streamlit-specific exceptions
         except Exception as e:
-            # More detailed error logging
+            # Check if this is a Streamlit StopException
+            if 'streamlit' in str(type(e)).lower() and 'stop' in str(type(e)).lower():
+                logging.info(f"Streamlit session stopped while processing {email}, gracefully exiting")
+                # Return a special indicator that this was a session stop, not a real error
+                return False, time.time() - start_time, "SESSION_STOPPED", current_token
+            
+            # More detailed error logging for other exceptions
             error_message = str(e)
             logging.error(f"Failed to process {email}: {error_message}", exc_info=True)
             
             # Only mark as emailed for permanent errors, and be more conservative here
             if not is_transient_error(error_message):
                 try:
-                    await update_lead_emailed_status(sheets_service, spreadsheet_id, email)
+                    update_lead_emailed_status(sheets_service, spreadsheet_id, email)
                     logging.info(f"Marked {email} as emailed due to permanent processing error")
                 except Exception as update_error:
                     logging.error(f"Failed to mark {email} as emailed: {str(update_error)}")
@@ -617,7 +708,7 @@ async def process_contact(session: aiohttp.ClientSession, sheets_service, spread
                 logging.warning(f"Not marking {email} as emailed due to transient error: {error_message}")
                 
             # Ensure failure tuple is returned even for unexpected errors
-            return False, time.time() - start_time, error_message
+            return False, time.time() - start_time, error_message, current_token
         finally:
             # Add a short delay between processing
             await asyncio.sleep(random.uniform(1, 2))
@@ -625,7 +716,7 @@ async def process_contact(session: aiohttp.ClientSession, sheets_service, spread
 async def create_multiple_gmail_drafts_async(
     service_account_info: Dict,
     user_email: str,
-    contacts: List[Tuple[str, str]],
+    contacts: List[Tuple[str, str, str]],
     from_email: str = None,
     spreadsheet_id: str = None
 ) -> None:
@@ -635,7 +726,7 @@ async def create_multiple_gmail_drafts_async(
     Args:
         service_account_info: Service account credentials
         user_email: User email to impersonate
-        contacts: List of (website, email) tuples
+        contacts: List of (website, email, notes) tuples
         from_email: Sender email address
         spreadsheet_id: Google Sheets ID for tracking
     """
@@ -648,12 +739,12 @@ async def create_multiple_gmail_drafts_async(
         
     # Filter out invalid emails and normalize websites
     filtered_contacts = []
-    for website, email in contacts:
+    for website, email, notes in contacts:
         if is_valid_email(email):
             # Normalize website URL
             if not website.startswith(('http://', 'https://')):
                 website = f"https://{website}"
-            filtered_contacts.append((website, email))
+            filtered_contacts.append((website, email, notes))
         else:
             logging.warning(f"Skipping invalid email: {email}")
     
@@ -662,39 +753,57 @@ async def create_multiple_gmail_drafts_async(
         return
         
     # Set up concurrent processing
-    # Use the configurable constant for concurrency limit
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_WORKERS)
     
-    # Create a single connector for all requests, respecting the concurrency limit
-    conn = aiohttp.TCPConnector(limit=MAX_CONCURRENT_WORKERS, ssl=True)
-    timeout = aiohttp.ClientTimeout(total=90)  # Overall timeout for the session
+    # Create initial session
+    session = await create_fresh_session()
     
-    # Create the session *once* outside the loop
-    async with aiohttp.ClientSession(
-        headers={
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-        },
-        timeout=timeout,
-        connector=conn
-    ) as session: 
-        # Process contacts in batches using the single session
+    try:
+        # Process contacts in batches using the session
         current_index = 0
         total_processed = 0
         total_success = 0
         total_failed = 0
         
+        # Refresh token, sheets service, and session every REFRESH_INTERVAL contacts
+        REFRESH_INTERVAL = 10  # Reduced from 20 to be more aggressive
+        contacts_since_refresh = 0
+        
         while current_index < len(filtered_contacts):
-            # Removed session creation from here
             try:
-                # Process contacts in smaller batches, respecting the semaphore limit
-                # Note: batch_size determines how many tasks are *created* at once, 
-                # but the semaphore ensures only MAX_CONCURRENT_WORKERS run simultaneously.
-                batch_size = min(MAX_CONCURRENT_WORKERS * 2, len(filtered_contacts) - current_index) # Can make batch size larger
+                # Refresh connections every REFRESH_INTERVAL contacts
+                if contacts_since_refresh >= REFRESH_INTERVAL:
+                    logging.info("Refreshing connections after processing batch...")
+                    try:
+                        # Check session health and recreate if needed
+                        if not await is_session_healthy(session):
+                            logging.info("Session unhealthy, recreating...")
+                            await session.close()
+                            session = await create_fresh_session()
+                        
+                        # Refresh Gmail token
+                        access_token = await refresh_access_token(service_account_info, user_email)
+                        # Refresh Sheets service
+                        sheets_service = await refresh_sheets_service(spreadsheet_id)
+                        contacts_since_refresh = 0
+                        logging.info("Successfully refreshed connections")
+                        await asyncio.sleep(2)  # Brief pause after refresh
+                    except Exception as refresh_error:
+                        logging.error(f"Failed to refresh connections: {refresh_error}")
+                        # Try to recreate session even if other refreshes failed
+                        try:
+                            await session.close()
+                            session = await create_fresh_session()
+                            logging.info("Recreated session after refresh failure")
+                        except Exception as session_error:
+                            logging.error(f"Failed to recreate session: {session_error}")
+                
+                batch_size = min(MAX_CONCURRENT_WORKERS * 2, len(filtered_contacts) - current_index)
                 batch_contacts = filtered_contacts[current_index:current_index + batch_size]
                 
                 # Create tasks for current batch
                 tasks = []
-                for i, (website, email) in enumerate(batch_contacts, current_index + 1):
+                for i, (website, email, notes) in enumerate(batch_contacts, current_index + 1):
                     task = process_contact(
                         session=session,
                         sheets_service=sheets_service,
@@ -702,63 +811,110 @@ async def create_multiple_gmail_drafts_async(
                         access_token=access_token,
                         website=website,
                         email=email,
+                        notes=notes,
                         sender_email=from_email,
                         i=i,
                         total=len(filtered_contacts),
-                        semaphore=semaphore
+                        semaphore=semaphore,
+                        service_account_info=service_account_info,
+                        user_email=user_email
                     )
                     tasks.append(task)
                 
-                # Run batch tasks concurrently using asyncio.gather
-                # return_exceptions=True ensures all tasks run even if some fail
-                gathered_results = await asyncio.gather(*tasks, return_exceptions=True)
+                # Run batch tasks concurrently with timeout
+                try:
+                    # Add a timeout to prevent hanging
+                    gathered_results = await asyncio.wait_for(
+                        asyncio.gather(*tasks, return_exceptions=True),
+                        timeout=300  # 5 minutes max per batch
+                    )
+                except asyncio.TimeoutError:
+                    logging.error(f"Batch timed out after 5 minutes, moving to next batch")
+                    # Mark all contacts in this batch as failed
+                    total_failed += len(batch_contacts)
+                    total_processed += len(batch_contacts)
+                    current_index += batch_size
+                    contacts_since_refresh += batch_size
+                    continue
                 
                 # Process results (handle potential exceptions)
-                results = [] # Keep the original results list structure for later processing
+                results = []
                 for result in gathered_results:
                     if isinstance(result, Exception):
-                        # Handle exceptions returned by gather
-                        logging.error(f"Task failed with exception: {result}")
-                        results.append((False, 0, str(result)))
+                        # Check if this is a Streamlit StopException
+                        if 'streamlit' in str(type(result)).lower() and 'stop' in str(type(result)).lower():
+                            logging.info("Streamlit session stopped, gracefully terminating batch processing")
+                            # Stop processing immediately when Streamlit wants to stop
+                            return
+                        else:
+                            logging.error(f"Task failed with exception: {result}")
+                            results.append((False, 0, str(result), access_token))
                     else:
-                        # Append successful results or results with handled errors from process_contact
                         results.append(result)
 
-                # Process results (original loop)
                 for result in results:
-                    if isinstance(result, tuple) and len(result) == 3:
-                        success, elapsed_time, error_msg = result
+                    # More robust result handling
+                    if isinstance(result, tuple):
+                        if len(result) == 4:
+                            success, elapsed_time, error_msg, token = result
+                            # Update access token if it was refreshed during processing
+                            if token and token != access_token:
+                                access_token = token
+                                
+                            # Handle session stopped case
+                            if error_msg == "SESSION_STOPPED":
+                                logging.info("Session stopped detected, terminating batch processing")
+                                return
+                                
+                        elif len(result) == 3:
+                            # Handle legacy 3-tuple results
+                            success, elapsed_time, error_msg = result
+                            
+                            # Handle session stopped case for legacy results
+                            if error_msg == "SESSION_STOPPED":
+                                logging.info("Session stopped detected, terminating batch processing")
+                                return
+                        else:
+                            # Unexpected tuple length
+                            logging.error(f"Unexpected result tuple length: {len(result)} - {result}")
+                            success = False
+                            error_msg = f"Malformed result tuple: {result}"
+                        
                         if success:
                             total_success += 1
                         else:
                             total_failed += 1
-                            if error_msg:
+                            if error_msg and error_msg != "SESSION_STOPPED":
                                 logging.error(f"Failed to process contact: {error_msg}")
                         total_processed += 1
                     else:
                         total_failed += 1
-                        logging.error(f"Unexpected result format: {result}")
+                        logging.error(f"Unexpected result format: {result} (type: {type(result)})")
                         total_processed += 1
                 
-                # Move to next batch
                 current_index += batch_size
+                contacts_since_refresh += batch_size
                 
-                # Add a small delay between batches
+                # Progress update
+                logging.info(f"Batch complete: {total_processed}/{len(filtered_contacts)} processed, {total_success} successful, {total_failed} failed")
+                
                 await asyncio.sleep(2)
                 
             except Exception as e:
-                logging.error(f"Error processing batch: {str(e)}")
-                # Ensure we still advance index even if a whole batch fails unexpectedly
-                current_index += min(MAX_CONCURRENT_WORKERS * 2, len(filtered_contacts) - current_index) 
-                # Update totals based on estimated batch size that failed
-                failed_in_batch = min(MAX_CONCURRENT_WORKERS * 2, len(filtered_contacts) - current_index + batch_size)
-                total_failed += failed_in_batch
-                total_processed += failed_in_batch
+                logging.error(f"Error processing batch: {str(e)}", exc_info=True)
+                # Calculate how many contacts were in the failed batch
+                failed_batch_size = min(MAX_CONCURRENT_WORKERS * 2, len(filtered_contacts) - current_index)
+                current_index += failed_batch_size
+                total_failed += failed_batch_size
+                total_processed += failed_batch_size
+                contacts_since_refresh += failed_batch_size
     
-    # Connector is automatically closed when the session using it is closed
-    # No need to explicitly call await conn.close()
+    finally:
+        # Always close the session when done
+        if session and not session.closed:
+            await session.close()
+            logging.info("Closed aiohttp session")
     
-    # Log final results
     logging.info(f"Completed processing {total_processed} contacts")
     logging.info(f"Successfully processed: {total_success}")
     logging.info(f"Failed to process: {total_failed}")
@@ -766,7 +922,7 @@ async def create_multiple_gmail_drafts_async(
 def create_multiple_gmail_drafts(
     service_account_info: Dict,
     user_email: str,
-    contacts: List[Tuple[str, str]],
+    contacts: List[Tuple[str, str, str]],
     from_email: str = None,
     spreadsheet_id: str = None
 ) -> None:
@@ -776,16 +932,13 @@ def create_multiple_gmail_drafts(
     Args:
         service_account_info: Service account credentials as a dictionary
         user_email: Email of the user to impersonate
-        contacts: List of (website, email) tuples
+        contacts: List of (website, email, notes) tuples
         from_email: Optional sender email (defaults to impersonated user)
         spreadsheet_id: ID of the Google Sheet to update
     """
     try:
-        # Create new event loop
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        
-        # Run the async function
         loop.run_until_complete(create_multiple_gmail_drafts_async(
             service_account_info=service_account_info,
             user_email=user_email,
@@ -793,134 +946,9 @@ def create_multiple_gmail_drafts(
             from_email=from_email,
             spreadsheet_id=spreadsheet_id
         ))
-        
-        # Clean up
         loop.close()
         
     except Exception as e:
         error_msg = f"Error in create_multiple_gmail_drafts: {str(e)}"
         logging.error(error_msg, exc_info=True)
-        if 'streamlit' in sys.modules:
-            st.error(error_msg)
-        raise  # Re-raise to be handled by the caller
-
-def check_if_already_emailed(sheets_service, spreadsheet_id, email):
-    """
-    Check if an email has already been marked as emailed in the spreadsheet.
-    If any instance is marked as emailed, update all instances to be marked as emailed.
-    
-    Args:
-        sheets_service: Google Sheets service object
-        spreadsheet_id: ID of the spreadsheet
-        email: Email address to check
-        
-    Returns:
-        bool: True if already emailed, False otherwise
-    """
-    try:
-        # Use cache instead of direct API call
-        leads_df = get_sheet_data_cached(sheets_service, spreadsheet_id, 'leads')
-        
-        # Find matching email
-        if leads_df is not None and not leads_df.empty and 'Email' in leads_df.columns:
-            matching_rows = leads_df[leads_df['Email'] == email]
-            
-            if not matching_rows.empty:
-                # Check if Emailed column exists and has a value
-                if 'Emailed?' in matching_rows.columns:
-                    # Check if any instance of this email has been marked as emailed
-                    already_emailed = any(
-                        emailed_value and str(emailed_value).lower() in ('yes', 'true', '1')
-                        for emailed_value in matching_rows['Emailed?']
-                    )
-                    
-                    if already_emailed:
-                        # Update all matching rows to be marked as emailed
-                        leads_df.loc[leads_df['Email'] == email, 'Emailed?'] = 'True'
-                        
-                        # Convert back to list format for sheets API
-                        values = [leads_df.columns.tolist()] + leads_df.values.tolist()
-                        
-                        # Write back all data
-                        body = {
-                            'values': values
-                        }
-                        sheets_service.spreadsheets().values().update(
-                            spreadsheetId=spreadsheet_id,
-                            range='leads!A1',
-                            valueInputOption='RAW',
-                            body=body
-                        ).execute()
-                        
-                        # Update the cache with new data
-                        try:
-                            update_cache_after_write(spreadsheet_id, 'leads')
-                        except Exception as cache_error:
-                            logging.warning(f"Cache update failed, but sheet was updated: {str(cache_error)}")
-                        
-                        logging.info(f"Updated all instances of {email} to be marked as emailed")
-                        return True
-        
-        return False
-        
-    except Exception as e:
-        logging.error(f"Error checking if {email} was already emailed: {str(e)}")
-        return False  # Assume not emailed in case of error
-
-async def update_lead_emailed_status(service, spreadsheet_id: str, email: str) -> None:
-    """
-    Update the Emailed? column to True for all rows with matching email (async version)
-    
-    Args:
-        service: Google Sheets service object
-        spreadsheet_id: ID of the spreadsheet
-        email: Email address to mark as emailed
-    """
-    try:
-        # Get existing data using cached version
-        leads_df = get_sheet_data_cached(service, spreadsheet_id, 'leads')
-        
-        if leads_df is None or leads_df.empty:
-            logging.warning("No data found in leads sheet")
-            return
-            
-        # Check if Emailed? column exists, create it if not
-        if 'Emailed?' not in leads_df.columns:
-            leads_df['Emailed?'] = ''
-            
-        # Update matching rows
-        mask = leads_df['Email'] == email
-        if not mask.any():
-            logging.warning(f"No matching rows found for email {email}")
-            return
-            
-        # Mark matching rows as emailed
-        leads_df.loc[mask, 'Emailed?'] = 'True'
-        
-        # Convert back to list format for sheets API
-        values = [leads_df.columns.tolist()] + leads_df.values.tolist()
-        
-        # Write back all data
-        body = {
-            'values': values
-        }
-        
-        # First update the sheet
-        service.spreadsheets().values().update(
-            spreadsheetId=spreadsheet_id,
-            range='leads!A1',
-            valueInputOption='RAW',
-            body=body
-        ).execute()
-        
-        # Then update the cache
-        try:
-            update_cache_after_write(spreadsheet_id, 'leads')
-        except Exception as cache_error:
-            logging.warning(f"Cache update failed, but sheet was updated: {str(cache_error)}")
-        
-        logging.info(f"Updated {mask.sum()} rows for email {email}")
-        
-    except Exception as e:
-        logging.error(f"Error updating emailed status for {email}: {str(e)}")
-        raise SheetsAuthError(f"Failed to update emailed status: {str(e)}") 
+        raise  # Re-raise to be handled by the caller 

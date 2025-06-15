@@ -1,0 +1,282 @@
+{% extends "base.html" %}
+
+{% block title %}Configure Templates - Lead Generation Tool{% endblock %}
+
+{% block content %}
+<h2>⚙️ Configure Email Templates</h2>
+<p>Customize email templates for different business types.</p>
+
+<div class="tabs">
+    <button class="tab active">Email Templates</button>
+    <button class="tab">Business Context</button>
+</div>
+
+<!-- Email Templates Tab -->
+<div class="tab-content active">
+    <div class="form-group">
+        <label for="template-type">Select Template Type</label>
+        <select id="template-type">
+            {% for key, template in templates.items() %}
+            <option value="{{ key }}">{{ key.replace('_', ' ').title() }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    
+    <form id="template-form">
+        <div class="form-group">
+            <label for="subject">Subject Line Template</label>
+            <input type="text" id="subject" name="subject" required>
+            <small style="color: #666;">You can use {business_name} as a placeholder</small>
+        </div>
+        
+        <div class="form-group">
+            <label for="main-pitch">Main Pitch</label>
+            <textarea id="main-pitch" name="main_pitch" rows="5" required></textarea>
+            <small style="color: #666;">This is the main value proposition. HTML formatting is supported.</small>
+        </div>
+        
+        <div class="form-group">
+            <label for="extra-context">Extra Context for LLM</label>
+            <textarea id="extra-context" name="extra_context" rows="5" required></textarea>
+            <small style="color: #666;">This context helps the AI understand the purpose of this template.</small>
+        </div>
+        
+        <button type="submit" class="btn">Update Template</button>
+    </form>
+    
+    <div style="margin-top: 40px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+        <!-- Add New Template -->
+        <div style="background: #f8f9fa; padding: 20px; border-radius: 8px;">
+            <h3>Add New Template</h3>
+            <form id="add-template-form">
+                <div class="form-group">
+                    <label for="new-template-name">New Template Type</label>
+                    <input type="text" id="new-template-name" name="name" required
+                           placeholder="e.g., yoga_studio"
+                           pattern="[a-z_]+"
+                           title="Use lowercase letters and underscores only">
+                    <small style="color: #666;">Use lowercase with underscores</small>
+                </div>
+                <button type="submit" class="btn btn-success">Add New Template</button>
+            </form>
+        </div>
+        
+        <!-- Remove Template -->
+        <div style="background: #f8f9fa; padding: 20px; border-radius: 8px;">
+            <h3>Remove Template</h3>
+            <form id="remove-template-form">
+                <div class="form-group">
+                    <label for="remove-template">Select Template to Remove</label>
+                    <select id="remove-template" name="template" required>
+                        {% for key in templates.keys() %}
+                        <option value="{{ key }}">{{ key.replace('_', ' ').title() }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <button type="submit" class="btn btn-danger">Delete Template</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Business Context Tab -->
+<div class="tab-content">
+    <h3>Global Business Context</h3>
+    <p>This context is used by our AI to understand your business when generating email content.</p>
+    
+    <form id="context-form">
+        <div class="form-group">
+            <label for="business-context">Edit Business Context</label>
+            <textarea id="business-context" name="context" rows="12" required>{{ context }}</textarea>
+            <small style="color: #666;">This context helps the AI understand your business and its value proposition.</small>
+        </div>
+        
+        <button type="submit" class="btn">Update Business Context</button>
+    </form>
+    
+    <div style="margin-top: 40px;">
+        <h3>Improve Context with AI</h3>
+        <p>Let our AI help you improve your business context.</p>
+        
+        <form id="improve-context-form">
+            <div class="form-group">
+                <label for="improvement-input">What would you like to improve?</label>
+                <textarea id="improvement-input" name="improvement" rows="5"
+                          placeholder="Describe what aspects of your context you'd like to improve and any additional information about your business that might help the AI..."></textarea>
+                <small style="color: #666;">You can mention specific focus areas and include additional business details.</small>
+            </div>
+            
+            <button type="submit" class="btn btn-success">Generate Improved Context</button>
+        </form>
+    </div>
+    
+    <div style="margin-top: 20px;">
+        <button id="reset-context-btn" class="btn btn-secondary">Reset Business Context to Default</button>
+    </div>
+</div>
+
+<div style="margin-top: 40px;">
+    <button id="reset-all-btn" class="btn btn-danger">Reset All Templates and Context to Default</button>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Template data
+const templates = {{ templates|tojson }};
+let currentTemplate = document.getElementById('template-type').value;
+
+// Load template data when selection changes
+function loadTemplate(templateType) {
+    const template = templates[templateType];
+    document.getElementById('subject').value = template.subject;
+    document.getElementById('main-pitch').value = template.main_pitch;
+    document.getElementById('extra-context').value = template.extra_context;
+}
+
+// Initialize with first template
+loadTemplate(currentTemplate);
+
+// Handle template selection change
+document.getElementById('template-type').addEventListener('change', (e) => {
+    currentTemplate = e.target.value;
+    loadTemplate(currentTemplate);
+});
+
+// Handle template update
+handleFormSubmit('template-form', async (form) => {
+    const formData = new FormData(form);
+    
+    const result = await apiCall('/update_template', 'POST', {
+        template_type: currentTemplate,
+        subject: formData.get('subject'),
+        main_pitch: formData.get('main_pitch'),
+        extra_context: formData.get('extra_context')
+    });
+    
+    if (result.success) {
+        showAlert(`Updated ${currentTemplate} template!`, 'success');
+        // Update local template data
+        templates[currentTemplate] = {
+            subject: formData.get('subject'),
+            main_pitch: formData.get('main_pitch'),
+            extra_context: formData.get('extra_context')
+        };
+    }
+});
+
+// Handle add new template
+handleFormSubmit('add-template-form', async (form) => {
+    const formData = new FormData(form);
+    const name = formData.get('name');
+    
+    if (templates[name]) {
+        showAlert(`Template '${name}' already exists!`, 'error');
+        return;
+    }
+    
+    // Add to templates object
+    templates[name] = {
+        subject: "Community Platform for {business_name}",
+        main_pitch: '<p style="margin: 0 0 1em 0;">Our platform could help create a <span style="font-weight: bold;">vibrant online community</span> around your business!</p>',
+        extra_context: "We are looking to sell these businesses on the idea of creating an online community around their activities."
+    };
+    
+    // Update template on server
+    const result = await apiCall('/update_template', 'POST', {
+        template_type: name,
+        ...templates[name]
+    });
+    
+    if (result.success) {
+        showAlert(`Added new template: ${name}`, 'success');
+        // Reload page to update selects
+        setTimeout(() => window.location.reload(), 1000);
+    }
+});
+
+// Handle remove template
+handleFormSubmit('remove-template-form', async (form) => {
+    const formData = new FormData(form);
+    const templateToRemove = formData.get('template');
+    
+    if (Object.keys(templates).length <= 1) {
+        showAlert('Cannot delete the only remaining template!', 'error');
+        return;
+    }
+    
+    if (confirm(`Are you sure you want to delete the '${templateToRemove}' template?`)) {
+        // Remove from templates
+        delete templates[templateToRemove];
+        
+        // Save updated templates
+        const result = await apiCall('/reset_templates', 'POST');
+        
+        if (result.success) {
+            showAlert(`Deleted template: ${templateToRemove}`, 'success');
+            // Reload page to update selects
+            setTimeout(() => window.location.reload(), 1000);
+        }
+    }
+});
+
+// Handle context update
+handleFormSubmit('context-form', async (form) => {
+    const formData = new FormData(form);
+    
+    const result = await apiCall('/update_context', 'POST', {
+        context: formData.get('context')
+    });
+    
+    if (result.success) {
+        showAlert('Updated business context!', 'success');
+    }
+});
+
+// Handle improve context
+handleFormSubmit('improve-context-form', async (form) => {
+    const formData = new FormData(form);
+    const improvementInput = formData.get('improvement');
+    
+    const btn = form.querySelector('button[type="submit"]');
+    btn.disabled = true;
+    btn.innerHTML = 'Generating improved context... <span class="loading"></span>';
+    
+    try {
+        const result = await apiCall('/improve_context', 'POST', {
+            improvement_input: improvementInput
+        });
+        
+        if (result.success) {
+            document.getElementById('business-context').value = result.context;
+            showAlert('Generated improved context! Review and save the changes.', 'success');
+        }
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Generate Improved Context';
+    }
+});
+
+// Handle reset context
+document.getElementById('reset-context-btn').addEventListener('click', async () => {
+    if (confirm('Are you sure you want to reset the business context to default?')) {
+        const result = await apiCall('/reset_templates', 'POST');
+        if (result.success) {
+            showAlert('Reset business context to default', 'success');
+            setTimeout(() => window.location.reload(), 1000);
+        }
+    }
+});
+
+// Handle reset all
+document.getElementById('reset-all-btn').addEventListener('click', async () => {
+    if (confirm('Are you sure you want to reset ALL templates and context to default? This cannot be undone.')) {
+        const result = await apiCall('/reset_templates', 'POST');
+        if (result.success) {
+            showAlert('Reset all templates and context to default', 'success');
+            setTimeout(() => window.location.reload(), 1000);
+        }
+    }
+});
+</script>
+{% endblock %} 

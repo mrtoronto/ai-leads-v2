@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+
+{% block title %}Send Emails - Lead Generation Tool{% endblock %}
+
+{% block content %}
+<h2>📧 Send Emails via Gmail</h2>
+<p>Select leads to create email drafts in Gmail.</p>
+
+<!-- Gmail Configuration -->
+<div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 30px;">
+    <h3>Gmail Configuration</h3>
+    <div class="form-group">
+        <label for="gmail-user">Gmail User Email</label>
+        <input type="email" id="gmail-user" value="{{ gmail_user }}" placeholder="your-email@gmail.com">
+    </div>
+    <div class="form-group">
+        <label for="from-email">From Email (optional)</label>
+        <input type="email" id="from-email" placeholder="Leave blank to use Gmail user email">
+        <small style="color: #666;">The email address that will appear in the 'From' field.</small>
+    </div>
+    <div class="alert alert-info">
+        <strong>Note:</strong> Emails will be created as drafts in Gmail for your review before sending.
+    </div>
+</div>
+
+<!-- Lead Stats -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <h3>{{ stats.available }}</h3>
+        <p>Available Leads</p>
+    </div>
+    <div class="stat-card">
+        <h3>{{ stats.emailed }}</h3>
+        <p>Already Emailed</p>
+    </div>
+</div>
+
+{% if leads %}
+<!-- Search Box -->
+<div class="search-box" style="margin-top: 30px;">
+    <input type="text" id="leads-search" placeholder="Search leads by name or website...">
+</div>
+
+<!-- Leads Table -->
+<div class="table-container">
+    <table id="leads-table">
+        <thead>
+            <tr>
+                <th><input type="checkbox"></th>
+                <th data-field="Org Name">Org Name</th>
+                <th data-field="Link">Website</th>
+                <th data-field="Email">Email</th>
+                <th data-field="Notes">Notes</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for lead in leads %}
+            <tr>
+                <td><input type="checkbox"></td>
+                <td>{{ lead['Org Name'] or '' }}</td>
+                <td>
+                    {% if (lead['Link'] or '').startswith('http://') or (lead['Link'] or '').startswith('https://') %}
+                        <a href="{{ lead['Link'] or '#' }}" target="_blank">{{ (lead['Link'] or '')[:40] }}{% if (lead['Link'] or '')|length > 40 %}...{% endif %}</a>
+                    {% else %}
+                        <a href="https://{{ lead['Link'] or '' }}" target="_blank">{{ (lead['Link'] or '')[:40] }}{% if (lead['Link'] or '')|length > 40 %}...{% endif %}</a>
+                    {% endif %}
+                </td>
+                <td>{{ lead['Email'] or '' }}</td>
+                <td>{{ (lead['Notes'] or '')[:100] }}{% if (lead['Notes'] or '')|length > 100 %}...{% endif %}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div style="margin-top: 20px;">
+    <button id="leads-table-action" class="btn" disabled>
+        Process <span id="leads-table-count">0</span> Selected Leads
+    </button>
+</div>
+
+<div id="email-results" style="margin-top: 20px;"></div>
+
+<!-- Progress tracking -->
+<div id="progress-container" style="display: none; margin-top: 20px;">
+    <h4>Processing Emails...</h4>
+    <div class="progress">
+        <div class="progress-bar" style="width: 0%"></div>
+    </div>
+    <p id="progress-text" style="margin-top: 10px; color: #666;"></p>
+</div>
+
+{% else %}
+<p>No leads available for email processing.</p>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('leads-table-action')?.addEventListener('click', async () => {
+    console.log('Button clicked'); // Debug log
+    
+    const table = document.getElementById('leads-table');
+    console.log('Table found:', table); // Debug log
+    
+    const checkedBoxes = table.querySelectorAll('tbody input[type="checkbox"]:checked');
+    console.log('Checked boxes:', checkedBoxes.length); // Debug log
+    
+    const selectedRows = getSelectedRows('leads-table');
+    
+    console.log('Selected rows:', selectedRows); // Debug log
+    
+    if (selectedRows.length === 0) {
+        showAlert('Please select leads to process', 'warning');
+        return;
+    }
+    
+    const gmailUser = document.getElementById('gmail-user').value;
+    const fromEmail = document.getElementById('from-email').value || gmailUser;
+    
+    if (!gmailUser) {
+        showAlert('Please enter a Gmail user email', 'error');
+        return;
+    }
+    
+    const btn = document.getElementById('leads-table-action');
+    const resultsDiv = document.getElementById('email-results');
+    const progressContainer = document.getElementById('progress-container');
+    const progressBar = progressContainer.querySelector('.progress-bar');
+    const progressText = document.getElementById('progress-text');
+    
+    btn.disabled = true;
+    btn.innerHTML = `Processing ${selectedRows.length} leads... <span class="loading"></span>`;
+    resultsDiv.innerHTML = '';
+    
+    // Show progress container
+    progressContainer.style.display = 'block';
+    progressText.textContent = `Starting to process ${selectedRows.length} email drafts...`;
+    
+    // Show warning
+    resultsDiv.innerHTML = '<div class="alert alert-warning">⚠️ Processing emails... Please do not navigate away from this page or refresh until complete!</div>';
+    
+    try {
+        const result = await apiCall('/send_emails', 'POST', {
+            selected_leads: selectedRows,  // Changed from 'leads' to 'selected_leads' to match backend
+            gmail_user: gmailUser,
+            from_email: fromEmail
+        });
+        
+        if (result.success) {
+            progressBar.style.width = '100%';
+            progressText.textContent = '✅ Processing complete!';
+            
+            resultsDiv.innerHTML = `<div class="alert alert-success">Successfully created ${result.count} email drafts in Gmail!</div>`;
+            
+            // Hide progress container after a moment
+            setTimeout(() => {
+                progressContainer.style.display = 'none';
+            }, 2000);
+            
+            // Reload page after 3 seconds to show updated data
+            setTimeout(() => {
+                window.location.reload();
+            }, 3000);
+        }
+    } catch (error) {
+        progressContainer.style.display = 'none';
+        
+        if (error.message.includes('stop')) {
+            resultsDiv.innerHTML = '<div class="alert alert-info">✋ Process was stopped. You can restart it by clicking the button again.</div>';
+        } else {
+            resultsDiv.innerHTML = `<div class="alert alert-error">Error: ${error.message}</div>`;
+        }
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = 'Process <span id="leads-table-count">0</span> Selected Leads';
+        updateSelectionCount('leads-table');
+    }
+});
+</script>
+{% endblock %} 

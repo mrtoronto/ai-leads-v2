@@ -1,58 +1,8 @@
 {
-  "coworking": {
-    "extra_context": "We are looking to sell these businesses on the idea of creating an online community around their physical space. This should increase regular attendance, engagement with the space, retention and revenue.",
-    "subject": "Digital Third Place for {business_name}",
-    "main_pitch": "<p style=\"margin: 0 0 1em 0;\">With Zakaya, we could create a <span style=\"font-weight: bold;\">digital third place</span> for your coworking community that complements your physical space!</p>"
+  "community": {
+    "extra_context": "We help organizations build engaged online communities where members feel connected and supported. Our focus is on creating meaningful interactions that reduce loneliness and increase participation.",
+    "subject": "Community Platform for {business_name}",
+    "main_pitch": "<p style=\"margin: 0 0 1em 0;\">Zakaya helps create <span style=\"font-weight: bold;\">active online communities</span> where members feel connected and supported.</p>"
   },
-  "event_space": {
-    "extra_context": "We are looking to sell these businesses on the idea of creating an online community around their events and venue. This should increase attendance, engagement, retention and revenue.",
-    "subject": "Community Platform for {business_name} Events",
-    "main_pitch": "<p style=\"margin: 0 0 1em 0;\">Zakaya could help create a <span style=\"font-weight: bold;\">vibrant online community</span> around your events and venue!</p>"
-  },
-  "community_center": {
-    "extra_context": "We are looking to sell these businesses on the idea of creating an online community around their physical space. This should increase event attendance, community engagement, member retention and revenue.",
-    "subject": "Digital Community Hub for {business_name}",
-    "main_pitch": "<p style=\"margin: 0 0 1em 0;\">Zakaya could help extend your community's reach with a <span style=\"font-weight: bold;\">dedicated digital space</span> that brings people together!</p>"
-  },
-  "fitness_center": {
-    "extra_context": "We are looking to sell these businesses on the idea of creating an online community around their fitness programs and classes. This should increase class attendance, member motivation, accountability, and retention.",
-    "subject": "Digital Fitness Community for {business_name}",
-    "main_pitch": "<p style=\"margin: 0 0 1em 0;\">Zakaya could transform your fitness center into a <span style=\"font-weight: bold;\">24/7 motivational community</span> that keeps members engaged between workouts!</p>"
-  },
-  "art_studio": {
-    "extra_context": "We are looking to sell these businesses on the idea of creating an online community around their art workshops and exhibitions. This should increase workshop participation, art sales, and student engagement.",
-    "subject": "Creative Community Platform for {business_name}",
-    "main_pitch": "<p style=\"margin: 0 0 1em 0;\">Zakaya could help build an <span style=\"font-weight: bold;\">inspiring creative community</span> that connects your artists beyond the studio!</p>"
-  },
-  "brewery": {
-    "extra_context": "We are looking to sell these businesses on the idea of creating an online community around their brewery events, tastings, and releases. This should increase event attendance, customer loyalty, and brand engagement.",
-    "subject": "Craft Beer Community for {business_name}",
-    "main_pitch": "<p style=\"margin: 0 0 1em 0;\">Zakaya could help create a <span style=\"font-weight: bold;\">passionate community</span> of craft beer enthusiasts around your brewery!</p>"
-  },
-  "music_venue": {
-    "extra_context": "We are looking to sell these businesses on the idea of creating an online community around their music events and performances. This should increase ticket sales, fan engagement, and venue loyalty.",
-    "subject": "Music Community Platform for {business_name}",
-    "main_pitch": "<p style=\"margin: 0 0 1em 0;\">Zakaya could help build an <span style=\"font-weight: bold;\">engaged music community</span> that keeps the energy going between shows!</p>"
-  },
-  "wellness_center": {
-    "extra_context": "We are looking to sell these businesses on the idea of creating an online community around their wellness programs and workshops. This should increase program participation, client support, and holistic engagement.",
-    "subject": "Wellness Community Hub for {business_name}",
-    "main_pitch": "<p style=\"margin: 0 0 1em 0;\">Zakaya could help create a <span style=\"font-weight: bold;\">supportive wellness community</span> that nurtures growth beyond sessions!</p>"
-  },
-  "bookstore": {
-    "extra_context": "We are looking to sell these businesses on the idea of creating an online community around their book events, reading groups, and author visits. This should increase event attendance, book sales, and reader engagement.",
-    "subject": "Reader Community Platform for {business_name}",
-    "main_pitch": "<p style=\"margin: 0 0 1em 0;\">Zakaya could help create a <span style=\"font-weight: bold;\">vibrant reading community</span> that extends beyond your shelves!</p>"
-  },
-  "farm": {
-    "extra_context": "We are looking to sell these businesses on the idea of creating an online community around their seasonal events, farm-to-table experiences, and educational programs. This should increase visitor engagement, product sales, and community support.",
-    "subject": "Farm Community Hub for {business_name}",
-    "main_pitch": "<p style=\"margin: 0 0 1em 0;\">Zakaya could help cultivate a <span style=\"font-weight: bold;\">thriving farm community</span> that connects people to local agriculture!</p>"
-  },
-  "community_garden": {
-    "extra_context": "We are looking to sell these organizations on the idea of creating an online community around their gardening activities, workshops, and volunteer programs. This should increase participation, knowledge sharing, and community involvement.",
-    "subject": "Digital Garden Community for {business_name}",
-    "main_pitch": "<p style=\"margin: 0 0 1em 0;\">Zakaya could help grow a <span style=\"font-weight: bold;\">flourishing garden community</span> that connects green thumbs year-round!</p>"
-  },
-  "context": "Here\u2019s an improved business context that incorporates the user\u2019s feedback while refining the existing points:\n\n1. **Deep Connection Spaces**: Zakaya goes beyond traditional platforms by creating dedicated spaces for meaningful interactions. This allows businesses to foster deeper connections rather than merely amplifying messages, ensuring that communications resonate with engaged community members.\n\n2. **Targeted Community Engagement**: Our dense micro-communities facilitate increased interaction among members, making it easier for businesses to connect with their audience. This is particularly beneficial for organizations that thrive on active participation, such as educational institutions and professional networks.\n\n3. **Retention and Loyalty**: By cultivating a community where members feel valued and connected, Zakaya enhances customer retention and loyalty. This is especially crucial for subscription-based services and membership organizations that rely on long-term engagement.\n\n4. **Comprehensive Feature Set**: Zakaya offers a robust suite of features, including text and voice chat rooms, content feeds, event calendars, and a buddy match program. These tools are designed to encourage interaction and can be customized to meet the unique needs of various communities, from social clubs to professional networks.\n\n5. **Onboarding and Integration**: The buddy match program not only accelerates the onboarding process for new members but also promotes ongoing engagement. This ensures that newcomers feel welcomed and integrated into the community, enhancing their overall experience.\n\n6. **Feedback-Driven Development**: Our commitment to incorporating user feedback into the development process makes Zakaya a platform that evolves with its users. This responsiveness appeals to tech-savvy audiences who value platforms that prioritize their needs and preferences.\n\n7. **Transparency and Trust**: By showcasing the progress of user feedback and feature requests in a global chat room, Zakaya builds trust with its users. This level of transparency differentiates us from competitors and fosters a more engaged and loyal user base.\n\n8. **Scalability and Customization**: Zakaya is designed to scale and adapt to the unique needs of different businesses or groups. Whether you\u2019re a small local business or a large organization, our platform can support your community-building goals effectively.\n\n9. **Event and Activity Coordination**: Our event calendar and activity feed streamline the coordination of events and activities, leading to higher participation rates. This ensures that community members are actively involved and engaged in shared experiences.\n\n10. **Transformative Communication**: Zakaya allows businesses to turn announcements into conversations, ensuring that messages reach the right audience. This approach not only enhances engagement but also encourages community members to participate in discussions around promotions and events, fostering a vibrant community atmosphere.\n\nBy integrating these refined points into your outreach strategy, you can present a compelling case for why potential users should choose Zakaya for their community-building needs."
+  "context": "Zakaya is a community platform that helps organizations:\n1. Create spaces for meaningful member interactions\n2. Increase participation in events and activities\n3. Help members feel more connected and less lonely\n4. Make it easy for staff to engage with the community\n\nKey features:\n- Text and voice chat rooms for different topics\n- Calendar for coordinating both organization activities and user-made events\n- Buddy matching to help new and old members connect\n- Simple tools for staff to manage and engage with community"
 }

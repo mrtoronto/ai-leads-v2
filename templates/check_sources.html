@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+
+{% block title %}Check Sources - Lead Generation Tool{% endblock %}
+
+{% block content %}
+<h2>📋 Check Existing Sources</h2>
+<p>Process all sources in the sheet to find contact information.</p>
+
+<!-- Source Stats -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <h3>{{ stats.total }}</h3>
+        <p>Total Sources</p>
+    </div>
+    <div class="stat-card">
+        <h3>{{ stats.checked }}</h3>
+        <p>Checked Sources</p>
+    </div>
+    <div class="stat-card">
+        <h3>{{ stats.new }}</h3>
+        <p>New Sources</p>
+    </div>
+</div>
+
+<div style="margin-top: 30px;">
+    <button id="check-sources-btn" class="btn">Check Sources</button>
+</div>
+
+<div id="check-results" style="margin-top: 20px;"></div>
+
+<!-- Current Sources -->
+<div style="margin-top: 40px;">
+    <h3>Current Sources</h3>
+    
+    {% if sources %}
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Title</th>
+                    <th>URL</th>
+                    <th>Description</th>
+                    <th>Date Found</th>
+                    <th>Status</th>
+                    <th>Leads Found</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for source in sources %}
+                <tr>
+                    <td>{{ source.Title }}</td>
+                    <td><a href="{{ source.URL }}" target="_blank">{{ source.URL[:50] }}{% if source.URL|length > 50 %}...{% endif %}</a></td>
+                    <td>{{ source.Description[:100] }}{% if source.Description|length > 100 %}...{% endif %}</td>
+                    <td>{{ source['Date Found'] }}</td>
+                    <td>
+                        <span class="status-badge status-{{ source.Status }}">
+                            {{ source.Status }}
+                        </span>
+                    </td>
+                    <td>{{ source['Leads Found'] }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p>No sources found in the sheet.</p>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+.status-badge {
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+}
+.status-new {
+    background: #e3f2fd;
+    color: #1976d2;
+}
+.status-checked {
+    background: #e8f5e9;
+    color: #388e3c;
+}
+</style>
+
+<script>
+document.getElementById('check-sources-btn')?.addEventListener('click', async () => {
+    const btn = document.getElementById('check-sources-btn');
+    const resultsDiv = document.getElementById('check-results');
+    
+    btn.disabled = true;
+    btn.innerHTML = 'Checking sources... <span class="loading"></span>';
+    resultsDiv.innerHTML = '<div class="alert alert-info">Processing sources for contact information...</div>';
+    
+    try {
+        const result = await apiCall('/check_sources', 'POST');
+        
+        if (result.success) {
+            resultsDiv.innerHTML = '<div class="alert alert-success">Source check completed!</div>';
+            
+            // Reload page after 2 seconds to show updated data
+            setTimeout(() => {
+                window.location.reload();
+            }, 2000);
+        }
+    } catch (error) {
+        resultsDiv.innerHTML = `<div class="alert alert-error">Error: ${error.message}</div>`;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Check Sources';
+    }
+});
+</script>
+{% endblock %} 

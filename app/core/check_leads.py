@@ -1,4 +1,3 @@
-import streamlit as st
 import asyncio
 import random
 from datetime import datetime
@@ -8,6 +7,9 @@ from app.utils.gcs import connect_to_sheets, get_sheet_data
 from app.utils.sheet_cache import get_sheet_data_cached
 from app.core.models import LeadCheckResult
 from langchain.output_parsers import PydanticOutputParser
+import logging
+
+logger = logging.getLogger(__name__)
 
 async def process_single_lead(context, service, spreadsheet_id, lead, i, total, semaphore):
     """Process a single lead to update contact info and generate notes"""
@@ -15,6 +17,10 @@ async def process_single_lead(context, service, spreadsheet_id, lead, i, total, 
     if not url:
         print(f"Skipping lead {i}/{total} - no URL")
         return
+        
+    # Ensure URL has proper protocol
+    if not url.startswith(('http://', 'https://')):
+        url = 'https://' + url.lstrip('/')
         
     print(f"\nProcessing lead {i}/{total}: {url}")
     
@@ -30,79 +36,139 @@ async def process_single_lead(context, service, spreadsheet_id, lead, i, total, 
                 try:
                     # First try with networkidle, then fall back to domcontentloaded if that times out
                     try:
-                        response = await page.goto(url, wait_until='networkidle', timeout=15000)
+                        response = await page.goto(
+                            url, 
+                            wait_until='networkidle', 
+                            timeout=30000  # Increase timeout to 30 seconds
+                        )
                     except Exception as e:
                         if 'timeout' in str(e).lower():
                             print(f"Networkidle timeout for {page_name}, falling back to domcontentloaded...")
-                            response = await page.goto(url, wait_until='domcontentloaded', timeout=15000)
+                            response = await page.goto(
+                                url, 
+                                wait_until='domcontentloaded', 
+                                timeout=30000  # Increase timeout to 30 seconds
+                            )
                         else:
                             raise
                     
                     if response and response.status < 400:
-                        # Wait a bit for dynamic content
-                        await page.wait_for_timeout(2000)
+                        # Wait a bit longer for dynamic content
+                        await page.wait_for_timeout(3000)
                         
                         # Get page content
                         content = await page.evaluate('() => document.body.innerText')
                         page_contents[page_name] = content
                         
-                        # Also get all links on the page
+                        # Get all navigation links and their text
                         links = await page.evaluate("""() => {
-                            const links = Array.from(document.querySelectorAll('a'));
-                            return links.map(link => ({
-                                text: link.innerText.trim(),
-                                href: link.href,
-                                isContact: link.href.toLowerCase().includes('contact') || 
-                                         link.innerText.toLowerCase().includes('contact')
-                            }));
+                            function isNavigationLink(element) {
+                                // Check if element is in header, nav, or menu
+                                const isInNav = element.closest('header, nav, [role="navigation"], [class*="menu"], [class*="nav"], [id*="menu"], [id*="nav"]');
+                                return isInNav !== null;
+                            }
+                            
+                            const allLinks = Array.from(document.querySelectorAll('a'));
+                            return allLinks
+                                .filter(link => {
+                                    const href = link.href;
+                                    // Only include links to same domain
+                                    return href && 
+                                           href.startsWith(window.location.origin) &&
+                                           !href.includes('#') && // Exclude anchor links
+                                           (isNavigationLink(link) || 
+                                            link.innerText.toLowerCase().includes('contact') ||
+                                            link.innerText.toLowerCase().includes('about'));
+                                })
+                                .map(link => ({
+                                    text: link.innerText.trim(),
+                                    href: link.href,
+                                    isContact: link.innerText.toLowerCase().includes('contact'),
+                                    isAbout: link.innerText.toLowerCase().includes('about')
+                                }));
                         }""")
                         return links
+                    elif response:
+                        print(f"HTTP {response.status} error accessing {url}")
+                        return []  # Other HTTP errors might be temporary
                     return []
                 except Exception as e:
                     print(f"Error accessing {page_name} page: {str(e)}")
-                    return []
+                    if 'net::ERR_NAME_NOT_RESOLVED' in str(e):
+                        print("DNS resolution failed - domain may no longer exist")
+                        return None  # DNS failure means domain is dead
+                    elif 'Cannot navigate to invalid URL' in str(e):
+                        print("Invalid URL format")
+                        return None  # Invalid URL should be removed
+                    return []  # Other errors might be temporary
             
             # Start with the provided URL
-            base_url = url.split('/')[0] + '//' + url.split('/')[2]  # Get base domain
-            links = await get_page_content(url, 'initial')
-            
-            # If we started on a contact page, also visit home page
-            if 'contact' in url.lower():
-                await get_page_content(base_url, 'home')
-            
-            # Look for and visit contact page if we haven't already
-            contact_links = [link for link in links if link['isContact']]
-            if contact_links and 'contact' not in url.lower():
-                await get_page_content(contact_links[0]['href'], 'contact')
-            
-            # If we haven't found a contact page yet, try common contact URLs
-            if 'contact' not in page_contents:
-                common_contact_paths = ['/contact', '/contact-us', '/about', '/about-us']
-                for path in common_contact_paths:
-                    if len(page_contents) >= 3:  # Limit to 3 pages maximum
-                        break
-                    await get_page_content(base_url + path, f'extra_{path}')
-            
-            # If we got no content, try one last time with the base URL
-            if not page_contents and base_url != url:
-                await get_page_content(base_url, 'home')
-            
-            # If we still got no content, exit
-            if not page_contents:
-                print(f"Could not get any content from {url}")
-                return
-            
-            # Combine all page contents with headers
-            combined_text = ""
-            for page_name, content in page_contents.items():
-                combined_text += f"\n=== {page_name.upper()} PAGE ===\n{content}\n"
-            
-            # Setup Pydantic parser
-            parser = PydanticOutputParser(pydantic_object=LeadCheckResult)
-            
-            # Process with LLM to extract contact info and generate notes
-            messages = [
-                {"role": "system", "content": f"""You are an expert at analyzing business websites and extracting contact information and creating highly specific sales talking points.
+            try:
+                # Extract base URL more safely
+                parsed_url = url.split('//')[-1].split('/')
+                base_url = 'https://' + parsed_url[0]
+                
+                # Get initial page content and links
+                initial_links = await get_page_content(url, 'initial')
+                if initial_links is None:  # Critical error occurred
+                    # Remove the lead from the sheet
+                    existing_data = get_sheet_data(service, spreadsheet_id, 'leads!A:J')
+                    if not existing_data:
+                        print("No data found in leads sheet")
+                        return
+                        
+                    headers = existing_data[0]
+                    rows = [headers]  # Start with headers
+                    
+                    # Keep all rows except the one with matching URL
+                    url_index = headers.index('Link')
+                    rows.extend([row for row in existing_data[1:] if row[url_index] != url])
+                    
+                    # Write back the filtered data
+                    body = {'values': rows}
+                    service.spreadsheets().values().update(
+                        spreadsheetId=spreadsheet_id,
+                        range='leads!A1',
+                        valueInputOption='RAW',
+                        body=body
+                    ).execute()
+                    
+                    print(f"Removed lead with invalid URL: {url}")
+                    return
+                
+                # Prioritize contact and about pages from navigation
+                important_pages = []
+                if initial_links:
+                    contact_links = [link for link in initial_links if link['isContact']]
+                    about_links = [link for link in initial_links if link['isAbout']]
+                    
+                    # Add unique links to important_pages
+                    seen_urls = set()
+                    for link in contact_links + about_links:
+                        if link['href'] not in seen_urls:
+                            important_pages.append(link)
+                            seen_urls.add(link['href'])
+                
+                # Visit important pages
+                for link in important_pages[:3]:  # Limit to 3 additional pages
+                    await get_page_content(link['href'], f"nav_{link['text'].lower()}")
+                
+                # If we got no content, something's wrong
+                if not page_contents:
+                    print(f"Could not get any content from {url}")
+                    return
+                
+                # Combine all page contents with headers
+                combined_text = ""
+                for page_name, content in page_contents.items():
+                    combined_text += f"\n=== {page_name.upper()} PAGE ===\n{content}\n"
+                
+                # Setup Pydantic parser
+                parser = PydanticOutputParser(pydantic_object=LeadCheckResult)
+                
+                # Process with LLM to extract contact info and generate notes
+                messages = [
+                    {"role": "system", "content": f"""You are an expert at analyzing business websites and extracting contact information and creating highly specific sales talking points.
 
 Your task is to:
 1. Find any phone numbers and email addresses on the page
@@ -128,38 +194,40 @@ Example bad talking points (too generic):
 • Streamline communication with automated updates
 
 {parser.get_format_instructions()}"""},
-                {"role": "user", "content": f"Please analyze this webpage content and create highly specific talking points that reference their actual offerings:\n{combined_text}"}
-            ]
-            
-            # Get LLM response
-            response = _llm(messages)
-            if response:
-                try:
-                    result = parser.parse(response)
-                    
-                    # Format notes as bullet points if they aren't already
-                    notes = result.notes
-                    if not notes.startswith('•'):
-                        notes = '\n'.join(f"• {point.strip()}" for point in notes.split('\n') if point.strip())
-                    
-                    # Prepare the update
-                    update = {
-                        'Org Name': lead.get('Org Name', ''),
-                        'Link': url,
-                        'Phone Number': result.phone or lead.get('Phone Number', ''),
-                        'Email': result.email or lead.get('Email', ''),
-                        'Notes': notes,
-                        'Checked?': 'checked'
-                    }
-                    
-                    # Write update
-                    write_to_leads_sheet(service, spreadsheet_id, [update], update_mode=True)
-                    print(f"Updated lead: {url}")
-                    
-                except Exception as e:
-                    print(f"Error parsing LLM response for {url}: {e}")
-                    print(f"Raw response: {response}")
-            
+                    {"role": "user", "content": f"Please analyze this webpage content and create highly specific talking points that reference their actual offerings:\n{combined_text}"}
+                ]
+                
+                # Get LLM response
+                response = _llm(messages)
+                if response:
+                    try:
+                        result = parser.parse(response)
+                        
+                        # Format notes as bullet points if they aren't already
+                        notes = result.notes
+                        if not notes.startswith('•'):
+                            notes = '\n'.join(f"• {point.strip()}" for point in notes.split('\n') if point.strip())
+                        
+                        # Prepare the update
+                        update = {
+                            'Org Name': lead.get('Org Name', ''),
+                            'Link': url,
+                            'Phone Number': result.phone or lead.get('Phone Number', ''),
+                            'Email': result.email or lead.get('Email', ''),
+                            'Notes': notes,
+                            'Checked?': 'checked'
+                        }
+                        
+                        # Write update
+                        write_to_leads_sheet(service, spreadsheet_id, [update], update_mode=True)
+                        print(f"Updated lead: {url}")
+                        
+                    except Exception as e:
+                        print(f"Error parsing LLM response for {url}: {e}")
+                        print(f"Raw response: {response}")
+            except Exception as e:
+                print(f"Error processing URL {url}: {str(e)}")
+                
         except Exception as e:
             print(f"Error processing {url}: {str(e)}")
         finally:
@@ -267,17 +335,17 @@ async def process_leads(context, service, spreadsheet_id, selected_leads):
     
     print("\nFinished processing all leads")
 
-async def check_leads(selected_leads):
+async def check_leads(selected_leads, spreadsheet_id):
     """Process selected leads to update contact information and generate notes"""
     # Connect to Google Sheets
-    service = connect_to_sheets(st.session_state.spreadsheet_id)
+    service = connect_to_sheets(spreadsheet_id)
     
     # Set up browser
     context, playwright = await setup_browser()
     try:
-        print("\nChecking leads for contact information...")
-        await process_leads(context, service, st.session_state.spreadsheet_id, selected_leads)
-        print("\nFinished checking leads")
+        logger.info("\nChecking leads for contact information...")
+        await process_leads(context, service, spreadsheet_id, selected_leads)
+        logger.info("\nFinished checking leads")
     finally:
         await context.close()
         await playwright.stop() 

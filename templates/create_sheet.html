@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block title %}Create New Sheet - Lead Generation Tool{% endblock %}
+
+{% block content %}
+<h2>📝 Create New Spreadsheet</h2>
+<p>Create a new Google Sheet with the required structure for lead generation.</p>
+
+<form id="create-sheet-form">
+    <div class="form-group">
+        <label for="sheet-title">Sheet Title</label>
+        <input type="text" id="sheet-title" name="title" required
+               placeholder="e.g., Lead Generation - Project X">
+    </div>
+    
+    <div class="form-group">
+        <label for="share-email">Share with Email</label>
+        <input type="email" id="share-email" name="email" required
+               placeholder="user@example.com">
+        <small style="color: #666;">The spreadsheet will be shared with this email address</small>
+    </div>
+    
+    <button type="submit" class="btn">Create Spreadsheet</button>
+</form>
+
+<div style="margin-top: 40px;">
+    <h3>About the Spreadsheet Structure</h3>
+    <p>The new spreadsheet will be created with three sheets:</p>
+    
+    <div style="margin-top: 20px;">
+        <h4>1. Sources Sheet</h4>
+        <p><strong>Columns:</strong> Title, URL, Description, Date Found, Status, Leads Found</p>
+        <p>Used to track potential lead sources</p>
+    </div>
+    
+    <div style="margin-top: 20px;">
+        <h4>2. Leads Sheet</h4>
+        <p><strong>Columns:</strong> Org Name, Link, Phone, Email, Notes, Checked?, Emailed?</p>
+        <p>Stores extracted lead information</p>
+    </div>
+    
+    <div style="margin-top: 20px;">
+        <h4>3. Searches Sheet</h4>
+        <p><strong>Columns:</strong> Date, Query, Returns</p>
+        <p>Logs search queries and their results</p>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+handleFormSubmit('create-sheet-form', async (form) => {
+    const formData = new FormData(form);
+    const data = {
+        title: formData.get('title'),
+        email: formData.get('email')
+    };
+    
+    const result = await apiCall('/create_sheet', 'POST', data);
+    
+    if (result.success) {
+        showAlert('Spreadsheet created successfully!', 'success');
+        
+        // Show link to the new spreadsheet
+        const linkDiv = document.createElement('div');
+        linkDiv.className = 'alert alert-info';
+        linkDiv.innerHTML = `
+            <p>✅ Spreadsheet created and shared with ${data.email}</p>
+            <p><a href="${result.url}" target="_blank">Open Spreadsheet</a></p>
+        `;
+        form.parentElement.insertBefore(linkDiv, form.nextSibling);
+        
+        // Update the spreadsheet ID in the session
+        setTimeout(() => {
+            window.location.href = '/';
+        }, 2000);
+    }
+});
+</script>
+{% endblock %} 

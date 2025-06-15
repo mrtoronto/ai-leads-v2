@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+
+{% block title %}Run Search - Lead Generation Tool{% endblock %}
+
+{% block content %}
+<h2>🔍 Run Search</h2>
+<p>Enter a search query to find potential leads.</p>
+
+<div class="tabs">
+    <button class="tab active">Run Single Search</button>
+    <button class="tab">Run Multiple Searches</button>
+</div>
+
+<!-- Single Search Tab -->
+<div class="tab-content active">
+    <form id="single-search-form">
+        <div class="form-group">
+            <label for="search-query">Search Query</label>
+            <input type="text" id="search-query" name="query" required
+                   placeholder="e.g., Co-working spaces in California doing community events">
+        </div>
+        
+        <button type="submit" class="btn">Run Search</button>
+    </form>
+    
+    <div id="single-search-results" style="margin-top: 20px;"></div>
+</div>
+
+<!-- Multiple Searches Tab -->
+<div class="tab-content">
+    <h3>Select Searches to Run</h3>
+    
+    <div class="form-group">
+        <label>
+            <input type="checkbox" id="show-new-only" checked> Show only new searches
+        </label>
+    </div>
+    
+    {% if searches %}
+    <div class="table-container">
+        <table id="searches-table">
+            <thead>
+                <tr>
+                    <th><input type="checkbox"></th>
+                    <th data-field="Date">Date</th>
+                    <th data-field="Query">Query</th>
+                    <th data-field="Returns">Returns</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for search in searches %}
+                <tr class="search-row" data-returns="{{ search.Returns|lower }}">
+                    <td><input type="checkbox"></td>
+                    <td>{{ search.Date }}</td>
+                    <td>{{ search.Query }}</td>
+                    <td>{{ search.Returns }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <div style="margin-top: 20px;">
+        <button id="searches-table-action" class="btn" disabled>
+            Run <span id="searches-table-count">0</span> Selected Searches
+        </button>
+    </div>
+    
+    <div id="batch-search-results" style="margin-top: 20px;"></div>
+    {% else %}
+    <p>No search history found.</p>
+    {% endif %}
+</div>
+
+<!-- Search History -->
+<div style="margin-top: 40px;">
+    <h3>Previous Searches</h3>
+    
+    {% if searches %}
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Query</th>
+                    <th>Returns</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for search in searches %}
+                <tr>
+                    <td>{{ search.Date }}</td>
+                    <td>{{ search.Query }}</td>
+                    <td>{{ search.Returns }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p>No search history found.</p>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Handle single search form
+handleFormSubmit('single-search-form', async (form) => {
+    const formData = new FormData(form);
+    const query = formData.get('query');
+    
+    const resultsDiv = document.getElementById('single-search-results');
+    resultsDiv.innerHTML = '<div class="alert alert-info">Running search...</div>';
+    
+    const result = await apiCall('/run_search', 'POST', {
+        type: 'single',
+        query: query
+    });
+    
+    if (result.success) {
+        resultsDiv.innerHTML = `
+            <div class="alert alert-success">
+                Search completed in ${result.elapsed_time.toFixed(1)} seconds! 
+                Found ${result.results_count} relevant results.
+            </div>
+        `;
+        
+        // Reload page after 2 seconds to show updated data
+        setTimeout(() => {
+            window.location.reload();
+        }, 2000);
+    }
+});
+
+// Handle batch search
+document.getElementById('searches-table-action')?.addEventListener('click', async () => {
+    const selectedRows = getSelectedRows('searches-table');
+    const queries = selectedRows.map(row => row.Query);
+    
+    const resultsDiv = document.getElementById('batch-search-results');
+    resultsDiv.innerHTML = `<div class="alert alert-info">Running ${queries.length} searches...</div>`;
+    
+    const result = await apiCall('/run_search', 'POST', {
+        type: 'multiple',
+        queries: queries
+    });
+    
+    if (result.success) {
+        const summary = `
+            <div class="alert alert-success">
+                Completed ${result.results.queries.length} searches in ${result.results.total_time.toFixed(1)} seconds! 
+                Found ${result.results.total_results} total results.
+            </div>
+        `;
+        
+        const details = result.results.queries.map((q, idx) => `
+            <div style="padding: 10px; border-bottom: 1px solid #eee;">
+                <strong>Query ${idx + 1}:</strong> ${q.query}<br>
+                Results: ${q.results_count} | Time: ${q.time_taken.toFixed(1)} seconds
+            </div>
+        `).join('');
+        
+        resultsDiv.innerHTML = summary + '<div style="margin-top: 20px;">' + details + '</div>';
+        
+        // Reload page after 3 seconds
+        setTimeout(() => {
+            window.location.reload();
+        }, 3000);
+    }
+});
+
+// Filter searches based on "show new only" checkbox
+document.getElementById('show-new-only')?.addEventListener('change', (e) => {
+    const rows = document.querySelectorAll('.search-row');
+    rows.forEach(row => {
+        if (e.target.checked) {
+            row.style.display = row.dataset.returns === 'new' ? '' : 'none';
+        } else {
+            row.style.display = row.dataset.returns !== 'new' ? '' : 'none';
+        }
+    });
+});
+
+// Initialize filter on page load
+document.getElementById('show-new-only')?.dispatchEvent(new Event('change'));
+</script>
+{% endblock %} 

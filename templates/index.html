@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}Home - Lead Generation Tool{% endblock %}
+
+{% block content %}
+<h2>Welcome to Lead Generation Tool</h2>
+
+<div class="form-group">
+    <label for="spreadsheet-id">Google Sheet ID</label>
+    <input type="text" id="spreadsheet-id" value="{{ spreadsheet_id }}" 
+           placeholder="Enter your Google Sheet ID">
+    <small style="color: #666;">The ID is the part of the Google Sheets URL after /d/</small>
+</div>
+
+{% if cache_info.initialized %}
+<div class="cache-info" style="margin: 20px 0; padding: 20px; background: #f8f9fa; border-radius: 8px;">
+    <h3>Cache Status</h3>
+    <p>✅ {{ cache_info.sheets_cached }} sheets cached</p>
+    <p>📄 Sheets: {{ cache_info.sheet_names|join(', ') }}</p>
+    <p>🕒 Last updated: {{ cache_info.newest_cache }}</p>
+    <button id="refresh-cache" class="btn btn-secondary">🔄 Refresh Data</button>
+</div>
+{% endif %}
+
+<div style="margin-top: 40px;">
+    <h3>Quick Actions</h3>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-top: 20px;">
+        <a href="/create_sheet" class="btn" style="text-align: center; padding: 20px;">
+            📝 Create New Sheet
+        </a>
+        <a href="/run_search" class="btn" style="text-align: center; padding: 20px;">
+            🔍 Run Search
+        </a>
+        <a href="/check_sources" class="btn" style="text-align: center; padding: 20px;">
+            📋 Check Sources
+        </a>
+        <a href="/send_emails" class="btn" style="text-align: center; padding: 20px;">
+            📧 Send Emails
+        </a>
+    </div>
+</div>
+
+<div style="margin-top: 40px;">
+    <h3>About This Tool</h3>
+    <p>This tool helps you generate and manage leads by:</p>
+    <ul style="margin-left: 20px; line-height: 2;">
+        <li>Running targeted searches to find potential leads</li>
+        <li>Processing existing sources to extract contact information</li>
+        <li>Generating new search queries based on your history</li>
+        <li>Creating personalized email drafts for outreach</li>
+    </ul>
+</div>
+{% endblock %} 

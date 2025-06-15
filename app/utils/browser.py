@@ -6,34 +6,40 @@ USER_DIR = os.path.expanduser('~/.playwright_profiles')
 
 
 async def setup_browser():
-    """Initialize and return a playwright browser instance with stealth settings"""
+    """Set up a browser instance with appropriate settings"""
     playwright = await async_playwright().start()
-    
-    # Ensure profile directory exists
-    os.makedirs(USER_DIR, exist_ok=True)
-    
-    # Use persistent context with a profile
-    context = await playwright.chromium.launch_persistent_context(
-        user_data_dir=USER_DIR,
-        headless=True,  # Always run in headless mode
-        viewport={'width': 1920, 'height': 1080},
-        user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    browser = await playwright.chromium.launch(
+        headless=True,  # Back to headless
         args=[
-            '--window-size=1920,1080',
-            '--disable-blink-features=AutomationControlled',
-            '--disable-features=IsolateOrigins,site-per-process',
-        ],
-        ignore_default_args=['--enable-automation'],
-        accept_downloads=True
+            '--disable-gpu', 
+            '--no-sandbox', 
+            '--disable-dev-shm-usage',
+            '--disable-blink-features=AutomationControlled',  # Hide automation flags
+            '--disable-web-security',
+            '--disable-features=VizDisplayCompositor'
+        ]
+    )
+    context = await browser.new_context(
+        viewport={'width': 1920, 'height': 1080},
+        user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',  # Updated user agent
+        ignore_https_errors=True,
+        # Add extra settings to avoid detection
+        extra_http_headers={
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-User': '?1',
+            'Sec-Fetch-Dest': 'document'
+        }
     )
     
-    # Add extra headers to appear more legitimate
+    # Remove webdriver property to avoid detection
     await context.add_init_script("""
         Object.defineProperty(navigator, 'webdriver', {
-            get: () => undefined
-        });
-        Object.defineProperty(navigator, 'plugins', {
-            get: () => [1, 2, 3, 4, 5]
+            get: () => undefined,
         });
     """)
     

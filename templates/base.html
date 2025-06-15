@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Lead Generation Tool{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <h1>🎯 Lead Generation Tool</h1>
+            <div class="sheet-info">
+                {% if sheet_info %}
+                    <span>Current Sheet: <a href="{{ sheet_info.url }}" target="_blank">{{ sheet_info.title }}</a></span>
+                {% else %}
+                    <span>No sheet selected</span>
+                {% endif %}
+            </div>
+        </header>
+
+        <!-- Navigation -->
+        <nav>
+            <a href="/" class="{% if request.endpoint == 'index' %}active{% endif %}">Home</a>
+            <a href="/create_sheet" class="{% if request.endpoint == 'create_sheet' %}active{% endif %}">Create Sheet</a>
+            <a href="/generate_searches" class="{% if request.endpoint == 'generate_searches' %}active{% endif %}">Generate Searches</a>
+            <a href="/run_search" class="{% if request.endpoint == 'run_search' %}active{% endif %}">Run Search</a>
+            <a href="/check_sources" class="{% if request.endpoint == 'check_sources_page' %}active{% endif %}">Check Sources</a>
+            <a href="/check_leads" class="{% if request.endpoint == 'check_leads_page' %}active{% endif %}">Check Leads</a>
+            <a href="/send_emails" class="{% if request.endpoint == 'send_emails' %}active{% endif %}">Send Emails</a>
+            <a href="/configure_templates" class="{% if request.endpoint == 'configure_templates' %}active{% endif %}">Templates</a>
+        </nav>
+
+        <!-- Main Content -->
+        <main>
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ category }}">{{ message }}</div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+
+            {% block content %}{% endblock %}
+        </main>
+
+        <!-- Footer -->
+        <footer>
+            <p>&copy; 2024 Lead Generation Tool</p>
+        </footer>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html> 

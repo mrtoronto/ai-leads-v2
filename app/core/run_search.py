@@ -1,14 +1,17 @@
-import streamlit as st
 import json
 import asyncio
 import random
 from app.utils.gcs import connect_to_sheets, get_existing_urls, write_to_sources_sheet, write_to_searches_sheet
 from app.utils.browser import setup_browser
 from datetime import datetime
-from app.llm.prompts import SEARCH_RESULTS_PROMPT, USER_BUSINESS_MESSAGE
+from app.llm.prompts import SEARCH_RESULTS_PROMPT
 from app.core.models import parser_lead_source_list
 from app.llm.llm import _llm
-import time  # Add this import if not already present
+import time
+import logging
+from urllib.parse import unquote
+
+logger = logging.getLogger(__name__)
 CHUNK_SIZE = 25
 
 
@@ -44,7 +47,6 @@ async def validate_search_results(results, existing_urls):
 
         messages = [
             {"role": "system", "content": SEARCH_RESULTS_PROMPT.render(format_instruction=parser_lead_source_list.get_format_instructions())},
-            {"role": "user", "content": USER_BUSINESS_MESSAGE},
             {"role": "user", "content": f"Please validate these sources and return only the relevant ones:\n{json.dumps(sources, indent=2)}"}
         ]
         
@@ -53,6 +55,16 @@ async def validate_search_results(results, existing_urls):
         if response:
             try:
                 validated_chunk = parser_lead_source_list.parse(response)
+                print(f"LLM validated {len(validated_chunk.RelevantSources)} out of {len(chunk)} sources")
+                
+                # Debug: Show what was filtered out
+                validated_urls = {source.url for source in validated_chunk.RelevantSources}
+                filtered_out = [s for s in sources if s['url'] not in validated_urls]
+                if filtered_out:
+                    print(f"LLM filtered out {len(filtered_out)} sources:")
+                    for source in filtered_out[:3]:  # Show first 3 filtered
+                        print(f"  - {source['name']}: {source['url']}")
+                
                 # Add validated sources back to results
                 for source in validated_chunk.RelevantSources:
                     matching_result = next((r for r in chunk if r["url"] == source.url), None)
@@ -72,6 +84,7 @@ async def validate_search_results(results, existing_urls):
 async def collect_search_results(page):
     """Collect detailed information about search results"""
     results = []
+    seen_urls = set()  # Track URLs we've already seen on this page
     
     try:
         # Wait for and get the main search results container
@@ -122,7 +135,6 @@ async def collect_search_results(page):
             try:
                 # Debug: Print the HTML of each result element
                 result_html = await result.evaluate('el => el.outerHTML')
-                print(f"\nProcessing result HTML:\n{result_html[:200]}...")  # First 200 chars
                 
                 # Get title - try multiple possible selectors
                 title = ''
@@ -182,6 +194,22 @@ async def collect_search_results(page):
                             break
                 
                 if title and url and not url.startswith('/search'):  # Only add if we have valid title and external URL
+                    # Filter out Google's UI elements and non-business results
+                    if any(skip in title.lower() for skip in ['ai overview', 'results for', 'people also ask', 'related searches']):
+                        continue
+                    
+                    # Filter out URLs that are just anchors or Google's internal links
+                    if url.startswith('#') or 'google.com' in url:
+                        continue
+                    
+                    # Decode URL if it's encoded
+                    url = unquote(url)
+                    
+                    # Skip if we've already seen this URL on this page
+                    if url in seen_urls:
+                        continue
+                    
+                    seen_urls.add(url)
                     print(f"Found result: {title} ({url})")
                     results.append({
                         'title': title,
@@ -211,8 +239,8 @@ async def perform_google_search(context, query, service, spreadsheet_id):
     total_pages_processed = 0
     
     async def natural_delay():
-        """More natural random delay with gaussian distribution"""
-        await asyncio.sleep(abs(random.gauss(2, 0.5)))
+        """Faster but still natural delay"""
+        await asyncio.sleep(abs(random.gauss(0.8, 0.3)))  # Reduced from 2, 0.5
     
     try:
         # Navigate to Google with a slight delay
@@ -220,12 +248,12 @@ async def perform_google_search(context, query, service, spreadsheet_id):
         await natural_delay()
         
         # Sometimes move mouse randomly before finding search box
-        if random.random() > 0.5:
+        if random.random() > 0.7:  # Reduced frequency
             await page.mouse.move(
                 random.randint(100, 500),
                 random.randint(100, 300)
             )
-            await natural_delay()
+            await asyncio.sleep(random.uniform(0.3, 0.6))  # Faster mouse delay
         
         # Find and click search box
         search_input = await page.wait_for_selector('textarea[name="q"]')
@@ -236,27 +264,27 @@ async def perform_google_search(context, query, service, spreadsheet_id):
             box['x'] + box['width']/2 + random.randint(-10, 10),
             box['y'] + box['height']/2 + random.randint(-5, 5)
         )
-        await natural_delay()
+        await asyncio.sleep(random.uniform(0.2, 0.4))  # Faster delay
         
         await search_input.click()
-        await natural_delay()
+        await asyncio.sleep(random.uniform(0.3, 0.5))  # Faster delay
         
-        # Type query with very human-like delays
+        # Type query with faster but still human-like delays
         words = query.split()
         for i, word in enumerate(words):
             if i > 0:  # Add space between words
                 await page.keyboard.press('Space')
-                await asyncio.sleep(random.uniform(0.1, 0.3))
+                await asyncio.sleep(random.uniform(0.05, 0.1))  # Much faster
             
             for char in word:
-                # Slower, more natural typing speed
-                await page.keyboard.type(char, delay=random.uniform(150, 350))
-                await asyncio.sleep(random.uniform(0.05, 0.15))
+                # Faster typing speed
+                await page.keyboard.type(char, delay=random.uniform(50, 120))  # Reduced from 150-350
+                await asyncio.sleep(random.uniform(0.02, 0.05))  # Much faster
         
-        await natural_delay()
+        await asyncio.sleep(random.uniform(0.3, 0.6))  # Faster delay
         
         # Sometimes move mouse before pressing enter
-        if random.random() > 0.5:
+        if random.random() > 0.7:  # Reduced frequency
             await page.mouse.move(
                 random.randint(600, 800),
                 random.randint(100, 300)
@@ -268,10 +296,10 @@ async def perform_google_search(context, query, service, spreadsheet_id):
         # Handle location popup if it appears
         try:
             # Look for the g-raised-button containing "Not now" text
-            not_now_button = await page.wait_for_selector('g-raised-button:has-text("Not now")', timeout=5000)
+            not_now_button = await page.wait_for_selector('g-raised-button:has-text("Not now")', timeout=3000)  # Faster timeout
             if not_now_button:
                 await not_now_button.click()
-                await natural_delay()
+                await asyncio.sleep(random.uniform(0.5, 1.0))  # Faster delay
         except Exception:
             # If no popup or click fails, continue normally
             pass
@@ -279,16 +307,16 @@ async def perform_google_search(context, query, service, spreadsheet_id):
         # Get existing URLs before starting
         existing_urls = get_existing_urls(service, spreadsheet_id)
         
-        # Process first 10 pages of results
+        # Process first 10 pages of results (increased from 5)
         for page_num in range(10):
             print(f"\nProcessing page {page_num + 1} of search results...")
-            await natural_delay()
+            await asyncio.sleep(random.uniform(0.5, 1.0))  # Faster delay
             
-            # Natural scrolling behavior
-            for _ in range(random.randint(2, 4)):
+            # Faster scrolling behavior
+            for _ in range(random.randint(1, 2)):  # Reduced scrolling
                 scroll_amount = random.randint(200, 400)
                 await page.mouse.wheel(0, scroll_amount)
-                await asyncio.sleep(random.uniform(1, 2))
+                await asyncio.sleep(random.uniform(0.3, 0.6))  # Much faster
             
             # Collect detailed results from current page
             page_results = await collect_search_results(page)
@@ -313,9 +341,14 @@ async def perform_google_search(context, query, service, spreadsheet_id):
             
             total_pages_processed = page_num + 1
             
+            # Skip to next if we already have good results
+            if len(total_results) >= 20:  # Stop early if we have enough results
+                print(f"Found {len(total_results)} results, stopping early")
+                break
+            
             # Scroll to bottom to ensure next button is in view
             await page.evaluate('window.scrollTo(0, document.body.scrollHeight)')
-            await natural_delay()
+            await asyncio.sleep(random.uniform(0.5, 1.0))  # Faster delay
             
             # Try multiple selectors for the next button
             next_button = None
@@ -328,7 +361,7 @@ async def perform_google_search(context, query, service, spreadsheet_id):
             
             for selector in next_button_selectors:
                 try:
-                    button = await page.wait_for_selector(selector, timeout=5000)
+                    button = await page.wait_for_selector(selector, timeout=3000)  # Faster timeout
                     if button and await button.is_visible():
                         next_button = button
                         print(f"Found next button using selector: {selector}")
@@ -340,19 +373,20 @@ async def perform_google_search(context, query, service, spreadsheet_id):
                 print("No more result pages available")
                 break
             
-            # Add more human-like behavior before clicking next
-            await natural_delay()
+            # Faster behavior before clicking next
+            await asyncio.sleep(random.uniform(0.3, 0.6))  # Faster delay
             
             # Ensure button is in view
             await next_button.scroll_into_view_if_needed()
-            await natural_delay()
+            await asyncio.sleep(random.uniform(0.2, 0.4))  # Faster delay
             
-            # Move mouse to random position first
-            await page.mouse.move(
-                random.randint(100, 800),
-                random.randint(100, 600)
-            )
-            await natural_delay()
+            # Move mouse to random position first (reduced frequency)
+            if random.random() > 0.7:
+                await page.mouse.move(
+                    random.randint(100, 800),
+                    random.randint(100, 600)
+                )
+                await asyncio.sleep(random.uniform(0.2, 0.4))  # Faster delay
             
             # Then move to and click the next button
             next_box = await next_button.bounding_box()
@@ -361,14 +395,31 @@ async def perform_google_search(context, query, service, spreadsheet_id):
                     next_box['x'] + next_box['width']/2 + random.randint(-5, 5),
                     next_box['y'] + next_box['height']/2 + random.randint(-3, 3)
                 )
-                await natural_delay()
+                await asyncio.sleep(random.uniform(0.2, 0.4))  # Faster delay
                 
                 # Click and wait for new results
                 await next_button.click()
-                await page.wait_for_selector('div#search', timeout=10000)
                 
-                # Add longer delay between pages to appear more human-like
-                await asyncio.sleep(random.uniform(3, 5))
+                # Wait for page to update - check if the first result changes
+                try:
+                    # Get the first result's text before we expect it to change
+                    first_result_selector = 'div#search div.g h3, div[data-hveid] h3'
+                    await page.wait_for_function(
+                        f"""
+                        () => {{
+                            const firstResult = document.querySelector('{first_result_selector}');
+                            return firstResult && firstResult.textContent !== arguments[0];
+                        }}
+                        """,
+                        arg=page_results[0]['title'] if page_results else '',
+                        timeout=5000
+                    )
+                except Exception:
+                    # If wait fails, just wait for the search div
+                    await page.wait_for_selector('div#search', timeout=10000)
+                
+                # Faster delay between pages
+                await asyncio.sleep(random.uniform(1.0, 2.0))  # Reduced from 3-5
             else:
                 print("Next button not clickable, ending search")
                 break
@@ -388,52 +439,52 @@ async def perform_google_search(context, query, service, spreadsheet_id):
 
 
 
-async def search_and_write(search_query):
+async def search_and_write(search_query, spreadsheet_id):
     # Start timing
     start_time = time.time()
     
     # Connect to Google Sheets
-    service = connect_to_sheets(st.session_state.spreadsheet_id)
+    service = connect_to_sheets(spreadsheet_id)
     
     # Set up browser and perform search
     context, playwright = await setup_browser()
     try:
-        print(f"\nPerforming new search for: {search_query}")
+        logger.info(f"\nPerforming new search for: {search_query}")
         
-        # Add random delay before starting
-        await asyncio.sleep(random.uniform(2, 4))
+        # Reduced initial delay
+        await asyncio.sleep(random.uniform(1, 2))  # Reduced from 2-4
         
-        search_page, results = await perform_google_search(context, search_query, service, st.session_state.spreadsheet_id)
+        search_page, results = await perform_google_search(context, search_query, service, spreadsheet_id)
         
         if search_page and results:
             # Write results to sources sheet
-            write_to_sources_sheet(service, st.session_state.spreadsheet_id, results)
+            write_to_sources_sheet(service, spreadsheet_id, results)
             
             # Log the search query and number of results
-            write_to_searches_sheet(service, st.session_state.spreadsheet_id, search_query, len(results))
+            write_to_searches_sheet(service, spreadsheet_id, search_query, len(results))
             
-            # More natural page interaction
-            for _ in range(random.randint(2, 4)):
-                await asyncio.sleep(random.uniform(1.5, 3))
+            # Minimal page interaction (reduced)
+            for _ in range(random.randint(1, 2)):  # Reduced from 2-4
+                await asyncio.sleep(random.uniform(0.5, 1.0))  # Faster
                 scroll_amount = random.randint(100, 300)
                 await search_page.mouse.wheel(0, scroll_amount)
                 
-                if random.random() > 0.6:
+                if random.random() > 0.8:  # Reduced frequency
                     await search_page.mouse.move(
                         random.randint(300, 1000),
                         random.randint(100, 600)
                     )
             
-            # Final pause before closing
-            await asyncio.sleep(random.uniform(2, 4))
+            # Reduced final pause
+            await asyncio.sleep(random.uniform(0.5, 1.5))  # Reduced from 2-4
             
-            print("\nSearch Summary:")
-            print(f"Query: {search_query}")
-            print(f"Found {len(results)} relevant results")
+            logger.info("\nSearch Summary:")
+            logger.info(f"Query: {search_query}")
+            logger.info(f"Found {len(results)} relevant results")
             
             # Calculate elapsed time
             elapsed_time = time.time() - start_time
-            print(f"Search completed in {elapsed_time:.2f} seconds")
+            logger.info(f"Search completed in {elapsed_time:.2f} seconds")
             
             # Return search results and timing info
             return len(results), elapsed_time
@@ -444,7 +495,7 @@ async def search_and_write(search_query):
         await context.close()
         await playwright.stop()
 
-async def run_multiple_searches(search_queries):
+async def run_multiple_searches(search_queries, spreadsheet_id):
     """Run multiple search queries sequentially"""
     # Start timing the entire batch
     batch_start_time = time.time()
@@ -453,40 +504,41 @@ async def run_multiple_searches(search_queries):
     search_results = []
     
     # Connect to Google Sheets
-    service = connect_to_sheets(st.session_state.spreadsheet_id)
+    service = connect_to_sheets(spreadsheet_id)
     
     for i, query in enumerate(search_queries, 1):
-        print(f"\n{'='*50}")
-        print(f"Starting search {i} of {len(search_queries)}: {query}")
-        print(f"{'='*50}\n")
+        logger.info(f"\n{'='*50}")
+        logger.info(f"Starting search {i} of {len(search_queries)}: {query}")
+        logger.info(f"{'='*50}\n")
         
         # Start timing this query
         query_start_time = time.time()
         
-        # Add random delay between searches
-        delay = random.uniform(10, 15)  # Increased delay between searches
-        print(f"Waiting {delay:.2f} seconds before starting next search...")
-        await asyncio.sleep(delay)
+        if i > 1:  # Skip delay for first search
+            # Reduced delay between searches
+            delay = random.uniform(5, 8)  # Reduced from 10-15
+            logger.info(f"Waiting {delay:.2f} seconds before starting next search...")
+            await asyncio.sleep(delay)
         
         context = None
         playwright = None
         search_page = None
         
         try:
-            print("Setting up new browser session...")
+            logger.info("Setting up new browser session...")
             context, playwright = await setup_browser()
-            print("Browser session created successfully")
+            logger.info("Browser session created successfully")
             
-            search_page, results = await perform_google_search(context, query, service, st.session_state.spreadsheet_id)
+            search_page, results = await perform_google_search(context, query, service, spreadsheet_id)
             
             # Calculate query elapsed time
             query_elapsed_time = time.time() - query_start_time
             
             if search_page and results:
-                print(f"\nSearch completed successfully:")
-                print(f"- Query: {query}")
-                print(f"- Results found: {len(results)}")
-                print(f"- Time taken: {query_elapsed_time:.2f} seconds")
+                logger.info(f"\nSearch completed successfully:")
+                logger.info(f"- Query: {query}")
+                logger.info(f"- Results found: {len(results)}")
+                logger.info(f"- Time taken: {query_elapsed_time:.2f} seconds")
                 
                 search_results.append({
                     "query": query,
@@ -494,7 +546,7 @@ async def run_multiple_searches(search_queries):
                     "time_taken": query_elapsed_time
                 })
             else:
-                print(f"\nSearch completed but no results found for: {query}")
+                logger.info(f"\nSearch completed but no results found for: {query}")
                 search_results.append({
                     "query": query,
                     "results_count": 0,
@@ -502,8 +554,8 @@ async def run_multiple_searches(search_queries):
                 })
                 
         except Exception as e:
-            print(f"\nError during search for query '{query}':")
-            print(f"Error details: {str(e)}")
+            logger.error(f"\nError during search for query '{query}':")
+            logger.error(f"Error details: {str(e)}")
             search_results.append({
                 "query": query,
                 "results_count": 0,
@@ -512,52 +564,47 @@ async def run_multiple_searches(search_queries):
             })
             
         finally:
-            print("\nCleaning up resources...")
+            logger.info("\nCleaning up resources...")
             
             # Close the search page if it exists
             if search_page:
                 try:
-                    print("Closing search page...")
+                    logger.info("Closing search page...")
                     await search_page.close()
-                    print("Search page closed successfully")
+                    logger.info("Search page closed successfully")
                 except Exception as e:
-                    print(f"Error closing search page: {str(e)}")
+                    logger.error(f"Error closing search page: {str(e)}")
             
             # Close the context if it exists
             if context:
                 try:
-                    print("Closing browser context...")
+                    logger.info("Closing browser context...")
                     await context.close()
-                    print("Browser context closed successfully")
+                    logger.info("Browser context closed successfully")
                 except Exception as e:
-                    print(f"Error closing browser context: {str(e)}")
+                    logger.error(f"Error closing browser context: {str(e)}")
             
             # Stop playwright if it exists
             if playwright:
                 try:
-                    print("Stopping playwright...")
+                    logger.info("Stopping playwright...")
                     await playwright.stop()
-                    print("Playwright stopped successfully")
+                    logger.info("Playwright stopped successfully")
                 except Exception as e:
-                    print(f"Error stopping playwright: {str(e)}")
+                    logger.error(f"Error stopping playwright: {str(e)}")
             
-            print("Cleanup completed")
-            
-            # Add extra delay after cleanup
-            delay = random.uniform(15, 20)  # Increased post-search delay
-            print(f"Waiting {delay:.2f} seconds before next search...")
-            await asyncio.sleep(delay)
+            logger.info("Cleanup completed")
     
     # Calculate total elapsed time
     total_elapsed_time = time.time() - batch_start_time
     total_results = sum(item["results_count"] for item in search_results)
     
-    print(f"\n{'='*50}")
-    print("Batch Summary:")
-    print(f"- Total searches completed: {len(search_queries)}")
-    print(f"- Total results found: {total_results}")
-    print(f"- Total time taken: {total_elapsed_time:.2f} seconds")
-    print(f"{'='*50}\n")
+    logger.info(f"\n{'='*50}")
+    logger.info("Batch Summary:")
+    logger.info(f"- Total searches completed: {len(search_queries)}")
+    logger.info(f"- Total results found: {total_results}")
+    logger.info(f"- Total time taken: {total_elapsed_time:.2f} seconds")
+    logger.info(f"{'='*50}\n")
     
     # Return the results summary
     return {
